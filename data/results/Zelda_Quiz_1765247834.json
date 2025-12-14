@@ -1,0 +1,14 @@
+{
+    "quiz_name": "Zelda Quiz",
+    "date": "2025-12-08 21:37:14.792906",
+    "total_players": 1,
+    "hardest_question": "What's the best WarioWare game?",
+    "incorrect_count_on_hardest": 1,
+    "winner": "tee",
+    "leaderboard": [
+        {
+            "name": "tee",
+            "score": 0
+        }
+    ]
+}

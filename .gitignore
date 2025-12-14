@@ -1,0 +1,14 @@
+# Secrets
+.env
+
+# Python compilation files
+__pycache__/
+*.pyc
+
+# Database (You usually don't want to upload your local play history)
+data/quiz_history.db
+
+# Virtual Environments (if you use them)
+venv/
+.venv/
+env/

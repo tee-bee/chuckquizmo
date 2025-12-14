@@ -1,0 +1,20 @@
+{
+    "name": "blah",
+    "creator_id": 368792134645448704,
+    "questions": [
+        {
+            "text": "test",
+            "options": [
+                "test",
+                "test",
+                "tttest"
+            ],
+            "correct_indices": [
+                2
+            ],
+            "time_limit": 30,
+            "image_url": "https://cdn.discordapp.com/attachments/1254794073605275648/1448054315255206020/airridersgamenight.png?ex=6939dd2c&is=69388bac&hm=eb05ea150bfccf831051e249fc1947171877b8ecdbccd46e506d59818f203976&",
+            "allow_multi_select": false
+        }
+    ]
+}

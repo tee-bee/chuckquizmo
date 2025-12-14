@@ -1,0 +1,34 @@
+{
+    "name": "Zelda Quiz",
+    "creator_id": 368792134645448704,
+    "questions": [
+        {
+            "text": "What's the best WarioWare game?",
+            "options": [
+                "WarioWare Gold",
+                "WarioWare Twisted",
+                "Game & Wario",
+                "Wario Land 4"
+            ],
+            "correct_indices": [
+                0
+            ],
+            "time_limit": 30,
+            "image_url": "https://cdn.discordapp.com/attachments/1254794073605275648/1449479509677051994/warioware-move-it-bgm-from-nintendo-direct-announcer-voice-v0-TpKyzhW5TIOi-k6TtktytdqSvPvKL3fw4xKxg2ni_Xw.webp?ex=693f0c7d&is=693dbafd&hm=e4b09dc18bff86018eab9fc11ea4d32747826b9e37530f16dcc3136b4c6adc33&",
+            "allow_multi_select": false
+        },
+        {
+            "text": "T/F: Krazy is a nerd",
+            "options": [
+                "True",
+                "False"
+            ],
+            "correct_indices": [
+                0
+            ],
+            "time_limit": 30,
+            "image_url": "https://cdn.discordapp.com/attachments/1254794073605275648/1449480579577024522/wario-1.jpg?ex=693f0d7c&is=693dbbfc&hm=eedf7c9d0e9f9548b12e705f5802db744134a5665204f58911bb15e9e37f3d09&",
+            "allow_multi_select": false
+        }
+    ]
+}

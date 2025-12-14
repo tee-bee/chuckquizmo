@@ -1,0 +1,93 @@
+{
+    "name": "Racing Games",
+    "creator_id": 193855542366568448,
+    "questions": [
+        {
+            "text": "In Mario Kart World, which of these tracks have two variants that appear in Grand Prix?",
+            "options": [
+                "Bowser's Castle",
+                "Peach Stadium",
+                "Mario Circuit",
+                "Shy Guy Bazaar"
+            ],
+            "correct_indices": [
+                1
+            ],
+            "time_limit": 30,
+            "image_url": null,
+            "allow_multi_select": false
+        },
+        {
+            "text": "Which of these series are NOT in Disney Speedstorm?",
+            "options": [
+                "Sid the Science Kid",
+                "Tron",
+                "Tangled",
+                "The Lion King"
+            ],
+            "correct_indices": [
+                3
+            ],
+            "time_limit": 30,
+            "image_url": "https://cdn.discordapp.com/attachments/1449520802516041911/1449616538805075998/wario-1.jpg?ex=693f8c1b&is=693e3a9b&hm=2bec2736dd956dcc29b2bf05d05c9f8a5448a071ffa49a3b9c050be6dfd4fbfa&",
+            "allow_multi_select": false
+        },
+        {
+            "text": "What is a new feature that machines can do in FAST Fusion which they cannot do in Fast RMX?",
+            "options": [
+                "Strafe",
+                "Boost",
+                "Switch Polarity/Color",
+                "Jump"
+            ],
+            "correct_indices": [
+                3
+            ],
+            "time_limit": 30,
+            "image_url": null,
+            "allow_multi_select": false
+        },
+        {
+            "text": "True or False: Garfield Kart: Furious Racing has the same tracks as the original Garfield Kart.",
+            "options": [
+                "True",
+                "False"
+            ],
+            "correct_indices": [
+                0
+            ],
+            "time_limit": 30,
+            "image_url": null,
+            "allow_multi_select": false
+        },
+        {
+            "text": "In Mario Kart World, which of these characters can you only unlock from either getting hit by the Kamek item or by using the UFO? (After updates)",
+            "options": [
+                "Stingby",
+                "Penguin",
+                "Fish Bone",
+                "Cow"
+            ],
+            "correct_indices": [
+                2
+            ],
+            "time_limit": 30,
+            "image_url": null,
+            "allow_multi_select": false
+        },
+        {
+            "text": "Which game is this track from?",
+            "options": [
+                "Mario Kart World",
+                "Sonic Racing: CrossWorlds",
+                "Kirby Air Riders"
+            ],
+            "correct_indices": [
+                1
+            ],
+            "time_limit": 30,
+            "image_url": "https://cdn.discordapp.com/attachments/1254794073605275648/1448053538772222224/1200.png?ex=6939dc73&is=69388af3&hm=286e178afb9524de912da28627e5489441b03ae56ef941bf2d98eb1e32202b62&",
+            "allow_multi_select": false
+        }
+    ]
+}

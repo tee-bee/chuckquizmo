@@ -1,0 +1,27 @@
+{
+    "name": "Testing New Options",
+    "creator_id": 368792134645448704,
+    "questions": [
+        {
+            "text": "Sort the Zelda games in order of release date.",
+            "options": [
+                "Breath of the Wild",
+                "Age of Calamity",
+                "Tears of the Kingdom",
+                "Age of Imprisonment"
+            ],
+            "correct_indices": [
+                0,
+                1,
+                2,
+                3
+            ],
+            "type": "reorder",
+            "time_limit": 30,
+            "weight": 1.0,
+            "explanation": null,
+            "image_url": null,
+            "allow_multi_select": false
+        }
+    ]
+}

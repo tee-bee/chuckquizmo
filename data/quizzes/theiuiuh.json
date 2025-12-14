@@ -1,0 +1,21 @@
+{
+    "name": "theiuiuh",
+    "creator_id": 368792134645448704,
+    "questions": [
+        {
+            "text": "Are you dumb or are you stupid",
+            "options": [
+                "I'm dumb",
+                "I'm stupid",
+                "I'm an idiot"
+            ],
+            "correct_indices": [
+                1,
+                2
+            ],
+            "time_limit": 30,
+            "image_url": null,
+            "allow_multi_select": true
+        }
+    ]
+}
