@@ -1110,7 +1110,7 @@ class Gameplay(commands.Cog):
             await interaction.response.send_message("No data.", ephemeral=True)
             return
         view = LeaderboardView(data, duration)
-        await interaction.response.send_message(embed=view.embed, view=view, ephemeral=True)
+        await interaction.response.send_message(embed=view.embed, view=view, ephemeral=False)
 
     @app_commands.command(name="roundup", description="View aggregate statistics")
     @app_commands.autocomplete(duration=duration_autocomplete)
@@ -1127,7 +1127,7 @@ class Gameplay(commands.Cog):
         embed.add_field(name="Easiest Question", value=data['easiest_q'], inline=False)
         embed.add_field(name="Hardest Question", value=data['hardest_q'], inline=False)
         embed.add_field(name="Most Played Quiz", value=data['most_played_quiz'], inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=False)
 
     @app_commands.command(name="bump", description="Manage bumping for the quiz embed")
     @app_commands.describe(mode="Manual, Timer (mins), Messages (count), or Off")

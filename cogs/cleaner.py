@@ -4,7 +4,6 @@ from discord.ext import commands
 from utils.data_manager import get_quiz_lookup, delete_quiz_file
 from utils.db_manager import get_session_lookup, delete_session, delete_sessions_range
 
-# Use the same permission constants/logic
 ADMIN_IDS = [368792134645448704, 193855542366568448]
 SERVER_ID = 238080556708003851
 ROLE_ID = 983357933565919252
@@ -26,7 +25,7 @@ class ConfirmView(discord.ui.View):
     @discord.ui.button(label="Confirm Delete", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.value = True
-        # Button interactions must also be deferred or handled
+        # Defer the button click so it doesn't spin forever
         await interaction.response.defer()
         self.stop()
 
@@ -45,7 +44,7 @@ class MultiQuizSelect(discord.ui.Select):
         super().__init__(placeholder="Select quizzes to delete...", min_values=1, max_values=len(options))
 
     async def callback(self, interaction: discord.Interaction):
-        # Defer the dropdown selection immediately
+        # Defer immediately to prevent "Interaction Failed" on selection
         await interaction.response.defer()
 
 class MultiQuizDeleteView(discord.ui.View):
@@ -53,15 +52,15 @@ class MultiQuizDeleteView(discord.ui.View):
         super().__init__(timeout=60)
         self.select = MultiQuizSelect(quiz_map)
         self.add_item(self.select)
-        self.selected_quizzes = []
 
     @discord.ui.button(label="Delete Selected", style=discord.ButtonStyle.danger, row=1)
     async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Defer button click
+        # 1. Defer the button interaction
         await interaction.response.defer()
         
         if not self.select.values:
-            await interaction.followup.send("No quizzes selected.", ephemeral=True)
+            # We can use followup here because we are in a button flow
+            await interaction.followup.send("❌ No quizzes selected.", ephemeral=True)
             return
         
         count = 0
@@ -69,8 +68,8 @@ class MultiQuizDeleteView(discord.ui.View):
             if delete_quiz_file(name):
                 count += 1
         
-        # Disable view after action
         self.stop()
+        # Edit the ORIGINAL message (the menu) to show results
         await interaction.edit_original_response(content=f"🗑️ **Deleted {count} quizzes.**", view=None)
 
 # --- COG ---
@@ -101,19 +100,22 @@ class Cleaner(commands.Cog):
     @app_commands.describe(name="The name of the quiz to delete")
     @app_commands.autocomplete(name=quiz_autocomplete)
     async def clear_quiz(self, interaction: discord.Interaction, name: str):
-        # DEFER HERE
+        # STEP 1: Defer immediately (Shows "Thinking...")
         await interaction.response.defer(ephemeral=True)
 
         if not is_privileged(interaction):
-            await interaction.followup.send("⛔ Admin Only.")
+            await interaction.edit_original_response(content="⛔ Admin Only.")
             return
 
         view = ConfirmView()
-        await interaction.followup.send(f"⚠️ Are you sure you want to delete quiz **{name}**?", view=view)
+        # STEP 2: Replace "Thinking..." with the prompt
+        await interaction.edit_original_response(content=f"⚠️ Are you sure you want to delete quiz **{name}**?", view=view)
+        
         await view.wait()
         
         if view.value:
             if delete_quiz_file(name):
+                # STEP 3: Replace prompt with result
                 await interaction.edit_original_response(content=f"✅ Deleted **{name}**.", view=None)
             else:
                 await interaction.edit_original_response(content=f"❌ Could not find **{name}**.", view=None)
@@ -125,15 +127,15 @@ class Cleaner(commands.Cog):
     @app_commands.describe(session_id="The ID of the session to delete")
     @app_commands.autocomplete(session_id=session_autocomplete)
     async def clear_session(self, interaction: discord.Interaction, session_id: int):
-        # DEFER HERE
         await interaction.response.defer(ephemeral=True)
 
         if not is_privileged(interaction):
-            await interaction.followup.send("⛔ Admin Only.")
+            await interaction.edit_original_response(content="⛔ Admin Only.")
             return
 
         view = ConfirmView()
-        await interaction.followup.send(f"⚠️ Delete Session ID **{session_id}** (and all its stats)?", view=view)
+        await interaction.edit_original_response(content=f"⚠️ Delete Session ID **{session_id}** (and all its stats)?", view=view)
+        
         await view.wait()
 
         if view.value:
@@ -145,38 +147,37 @@ class Cleaner(commands.Cog):
     # 3. DELETE MULTIPLE QUIZZES
     @app_commands.command(name="quizzes_select", description="Select multiple quizzes to delete")
     async def clear_quizzes_select(self, interaction: discord.Interaction):
-        # DEFER HERE
         await interaction.response.defer(ephemeral=True)
 
         if not is_privileged(interaction):
-            await interaction.followup.send("⛔ Admin Only.")
+            await interaction.edit_original_response(content="⛔ Admin Only.")
             return
 
         quiz_map = get_quiz_lookup()
         if not quiz_map:
-            await interaction.followup.send("No quizzes found.")
+            await interaction.edit_original_response(content="No quizzes found.")
             return
 
         view = MultiQuizDeleteView(quiz_map)
-        await interaction.followup.send("👇 Select quizzes to delete (Max 25 at a time):", view=view)
+        await interaction.edit_original_response(content="👇 Select quizzes to delete (Max 25 at a time):", view=view)
 
     # 4. DELETE SESSION RANGE
     @app_commands.command(name="sessions_range", description="Delete a range of history sessions")
     @app_commands.describe(start_id="Start of Session ID Range", end_id="End of Session ID Range")
     @app_commands.autocomplete(start_id=session_autocomplete, end_id=session_autocomplete)
     async def clear_sessions_range(self, interaction: discord.Interaction, start_id: int, end_id: int):
-        # DEFER HERE
         await interaction.response.defer(ephemeral=True)
 
         if not is_privileged(interaction):
-            await interaction.followup.send("⛔ Admin Only.")
+            await interaction.edit_original_response(content="⛔ Admin Only.")
             return
 
         low = min(start_id, end_id)
         high = max(start_id, end_id)
         
         view = ConfirmView()
-        await interaction.followup.send(f"⚠️ **DANGER:** Delete ALL sessions between ID **{low}** and **{high}**?", view=view)
+        await interaction.edit_original_response(content=f"⚠️ **DANGER:** Delete ALL sessions between ID **{low}** and **{high}**?", view=view)
+        
         await view.wait()
 
         if view.value:
@@ -187,5 +188,3 @@ class Cleaner(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Cleaner(bot))
-    # Add the group to the tree explicitly
-    bot.tree.add_command(Cleaner(bot).group)
