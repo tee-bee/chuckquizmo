@@ -178,6 +178,9 @@ async def finish_game_logic(session: GameSession, interaction: discord.Interacti
         await interaction.channel.send(embed=over_embed)
     except: pass
 
+    if session.channel_id in active_sessions:
+        del active_sessions[session.channel_id]
+
 async def do_bump(session: GameSession, channel):
     for attr in ['lobby_msg', 'dashboard_msg', 'connector_msg']:
         msg = getattr(session, attr, None)
@@ -859,6 +862,9 @@ class Gameplay(commands.Cog):
                     session.is_running = s_data['is_running']
                     session.start_time = s_data['start_time']
                     session.end_time = s_data.get('end_time', 0)
+                    # Skip sessions that have already ended
+                    if session.end_time > 0: 
+                        continue
                     session.global_powerplay_active = s_data.get('global_powerplay_active', False)
                     session.global_powerplay_end = s_data.get('global_powerplay_end', 0)
                     session.question_stats = {int(k): v for k, v in s_data['question_stats'].items()}
