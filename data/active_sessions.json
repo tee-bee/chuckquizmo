@@ -1,0 +1,105 @@
+{
+    "1449520802516041911": {
+        "channel_id": 1449520802516041911,
+        "quiz_name": "Racing Games",
+        "players": {
+            "368792134645448704": {
+                "user_id": 368792134645448704,
+                "name": "tee",
+                "avatar_url": "https://cdn.discordapp.com/avatars/368792134645448704/d37853823a4ffa2910cde80e1e2dced4.png?size=1024",
+                "score": 1817,
+                "streak": 2,
+                "current_q_index": 2,
+                "question_order": [
+                    2,
+                    5,
+                    3,
+                    4,
+                    0,
+                    1
+                ],
+                "inventory": [
+                    {
+                        "name": "Glitch",
+                        "description": "Glitch everyone's screen (10s)",
+                        "effect": "glitch",
+                        "value": 0,
+                        "icon": "\ud83d\udc7e"
+                    },
+                    {
+                        "name": "Time Freeze",
+                        "description": "Freezes timer for max points",
+                        "effect": "time_freeze",
+                        "value": 0,
+                        "icon": "\u2744\ufe0f"
+                    },
+                    {
+                        "name": "Streak Saver",
+                        "description": "Protects streak on wrong answer",
+                        "effect": "streak_saver",
+                        "value": 0,
+                        "icon": "\ud83d\udee1\ufe0f"
+                    }
+                ],
+                "active_powerups": [],
+                "completed": false,
+                "notifications": [],
+                "correct_answers": 2,
+                "incorrect_answers": 0,
+                "time_per_question": {},
+                "current_q_timestamp": 0,
+                "join_time": 1765726132.9521554,
+                "completion_timestamp": 0.0,
+                "answers_log": [
+                    {
+                        "q_index": 2,
+                        "q_text": "What is a new feature that machines can do in FAST Fusion which they cannot do in Fast RMX?",
+                        "chosen": [
+                            3
+                        ],
+                        "chosen_text": "Jump",
+                        "is_correct": true,
+                        "time": 7.984103679656982,
+                        "points": 893
+                    },
+                    {
+                        "q_index": 5,
+                        "q_text": "Which game is this track from?",
+                        "chosen": [
+                            1
+                        ],
+                        "chosen_text": "Sonic Racing: CrossWorlds",
+                        "is_correct": true,
+                        "time": 13.18487286567688,
+                        "points": 924
+                    }
+                ],
+                "view_state": {}
+            }
+        },
+        "is_running": true,
+        "start_time": 1765726134.580241,
+        "end_time": 0,
+        "global_powerplay_active": false,
+        "global_powerplay_end": 0,
+        "question_stats": {
+            "0": 0,
+            "1": 0,
+            "2": 0,
+            "3": 0,
+            "4": 0,
+            "5": 0
+        },
+        "powerup_usage_log": [],
+        "bump_mode": null,
+        "bump_interval": 0,
+        "bump_threshold": 0,
+        "last_bump_time": 0,
+        "message_counter": 0,
+        "msg_ids": {
+            "lobby": null,
+            "dashboard": 1449785304532910233,
+            "connector": 1449785305660919820
+        }
+    }
+}

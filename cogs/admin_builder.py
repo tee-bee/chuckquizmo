@@ -18,7 +18,6 @@ def get_correct_answer_str(question: Question) -> str:
         if idx < len(question.options):
             label = chr(65 + idx)
             text = question.options[idx]
-            if len(text) > 15: text = text[:12] + "..."
             parts.append(f"**{label}** ({text})")
     return ", ".join(parts)
 
@@ -208,7 +207,8 @@ class QuestionSelector(discord.ui.Select):
     def __init__(self, quiz):
         options = []
         for i, q in enumerate(quiz.questions[:25]):
-            options.append(discord.SelectOption(label=f"Q{i+1}", description=q.text[:50], value=str(i)))
+            # Increased limit to 95 chars (Discord max is 100)
+            options.append(discord.SelectOption(label=f"Q{i+1}", description=q.text[:95], value=str(i)))
         if not options:
             options.append(discord.SelectOption(label="No questions yet", value="-1"))
         super().__init__(placeholder="Select a question to edit...", options=options, disabled=len(quiz.questions) == 0)
@@ -240,7 +240,8 @@ class QuizEditorHub(discord.ui.View):
             for i, q in enumerate(self.quiz.questions):
                 ans_str = get_correct_answer_str(q)
                 icon = "🔢" if q.type == QuestionType.REORDER else "📝"
-                line = f"`Q{i+1}` {icon} {q.text[:25]}... → {ans_str}\n"
+                # Removed truncation here to show full question text
+                line = f"`Q{i+1}` {icon} {q.text} → {ans_str}\n"
                 if len(desc) + len(line) < 3800: desc += line
                 else:
                     desc += "..."

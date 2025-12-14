@@ -16,6 +16,7 @@ from utils.db_manager import (
 )
 
 ADMIN_IDS = [368792134645448704, 193855542366568448]
+STATE_FILE = "data/active_sessions.json"
 
 def is_hardcoded_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -465,24 +466,34 @@ class AdminLaunchView(discord.ui.View):
         await interaction.response.edit_message(content="✅ **Game Started!**", view=None)
 
 class GameView(discord.ui.View):
-    def __init__(self, session: GameSession, player: Player, status_log: str = ""):
+    def __init__(self, session: GameSession, player: Player, status_log: str = "", restored: bool = False):
         super().__init__(timeout=None)
         self.session = session
         self.player = player
-        self.status_log = status_log 
-        self.current_selections = set() 
-        self.reorder_sequence = []
-        self.displayed_to_original_map = {}
+        self.status_log = status_log
+        self.restored = restored # <--- Flag to track if this is a "zombie" board
+        
+        # --- RESTORE STATE LOGIC ---
+        saved_state = self.player.view_state
+        self.current_selections = set(saved_state.get('selections', []))
+        self.reorder_sequence = saved_state.get('reorder', [])
+        # Convert string keys back to int
+        saved_map = saved_state.get('map', {})
+        self.displayed_to_original_map = {int(k): v for k, v in saved_map.items()}
+
         if not hasattr(self.session, 'powerup_usage_log'): self.session.powerup_usage_log = []
+        
         if self.player.current_q_index < len(self.player.question_order):
             self.real_q_index = self.player.question_order[self.player.current_q_index]
             self.current_q = session.quiz.questions[self.real_q_index]
         else:
             self.current_q = None 
             self.real_q_index = -1
+        
         if player.current_q_timestamp == 0.0:
             player.current_q_timestamp = time.time()
         self.question_start_time = player.current_q_timestamp
+        
         if self.current_q:
              self.setup_answer_buttons()
              self.setup_powerup_buttons()
@@ -493,38 +504,64 @@ class GameView(discord.ui.View):
         except: rank = 0
         return f"#{rank}"
 
+    def save_view_state(self):
+        self.player.view_state = {
+            'map': self.displayed_to_original_map,
+            'selections': list(self.current_selections),
+            'reorder': self.reorder_sequence
+        }
+
+    async def handle_restored(self, interaction: discord.Interaction):
+        """Standard response for any interaction on a restored/stale board"""
+        msg = "⚠️ **Board Expired:** The bot was reloaded. Please generate a fresh board from the main menu!"
+        # Invalidate the UI so they stop clicking it
+        await interaction.response.edit_message(content=msg, view=None, embed=None)
+
     def setup_answer_buttons(self):
         if not self.current_q: return
-        original_options = list(enumerate(self.current_q.options))
-        random.seed(f"{self.session.start_time}_{self.player.user_id}_{self.real_q_index}")
-        if self.current_q.type == QuestionType.REORDER:
+        
+        if not self.displayed_to_original_map:
+            original_options = list(enumerate(self.current_q.options))
+            random.seed(f"{self.session.start_time}_{self.player.user_id}_{self.real_q_index}")
             shuffled_options = random.sample(original_options, len(original_options))
-        else:
-            shuffled_options = random.sample(original_options, len(original_options))
-        random.seed()
-        self.displayed_to_original_map = {i: opt[0] for i, opt in enumerate(shuffled_options)}
+            random.seed()
+            self.displayed_to_original_map = {i: opt[0] for i, opt in enumerate(shuffled_options)}
+        
+        self.save_view_state()
+
+        shuffled_options = []
+        for i in range(len(self.displayed_to_original_map)):
+            orig_idx = self.displayed_to_original_map[i]
+            if orig_idx < len(self.current_q.options):
+                shuffled_options.append((orig_idx, self.current_q.options[orig_idx]))
+
         labels = ["A", "B", "C", "D", "E"]
         wrong_indices = [i for i, _ in enumerate(self.current_q.options) if i not in self.current_q.correct_indices]
+        
         disabled_original_indices = []
         for p in self.player.active_powerups:
             if p.effect == EffectType.FIFTY_FIFTY:
                 if len(wrong_indices) >= 2: disabled_original_indices = random.sample(wrong_indices, 2)
             elif p.effect == EffectType.ERASER:
                 if wrong_indices: disabled_original_indices = [random.choice(wrong_indices)]
+        
         for i, (orig_idx, text) in enumerate(shuffled_options):
             if i >= 5: break 
             custom_id = f"ans_{i}_{self.player.user_id}"
             is_disabled = orig_idx in disabled_original_indices
             style = discord.ButtonStyle.primary
+            
             if self.current_q.type == QuestionType.REORDER:
                 if orig_idx in self.reorder_sequence:
                     style = discord.ButtonStyle.success
                     is_disabled = True
             elif self.current_q.allow_multi_select:
                 if i in self.current_selections: style = discord.ButtonStyle.success
+            
             btn = discord.ui.Button(label=f"{labels[i]}: {text[:75]}", style=style, custom_id=custom_id, row=0 if i < 3 else 1, disabled=is_disabled)
             btn.callback = self.answer_callback
             self.add_item(btn)
+            
         if self.current_q.allow_multi_select or self.current_q.type == QuestionType.REORDER:
             submit_btn = discord.ui.Button(label="Submit", style=discord.ButtonStyle.success, custom_id=f"submit_{self.player.user_id}", row=2, emoji="✅")
             submit_btn.callback = self.submit_callback
@@ -557,6 +594,7 @@ class GameView(discord.ui.View):
         return True
 
     async def powerup_callback(self, interaction):
+        if self.restored: return await self.handle_restored(interaction) # <--- CHECK
         if not await self.check_ownership(interaction): return
         if len(self.player.active_powerups) > 0:
             await interaction.response.send_message("❌ One powerup per turn!", ephemeral=True)
@@ -567,6 +605,7 @@ class GameView(discord.ui.View):
         selected_powerup = self.player.inventory.pop(index)
         self.player.active_powerups.append(selected_powerup)
         self.session.powerup_usage_log.append({'user_id': self.player.user_id, 'name': selected_powerup.name})
+        
         if selected_powerup.effect == EffectType.POWER_PLAY:
             self.session.global_powerplay_end = time.time() + 20
             self.session.global_powerplay_active = True
@@ -582,6 +621,7 @@ class GameView(discord.ui.View):
                     if p.user_id != self.player.user_id:
                         asyncio.create_task(push_update_to_player(self.session, p, glitch=False))
             asyncio.create_task(revert())
+            
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
@@ -589,8 +629,10 @@ class GameView(discord.ui.View):
         await interaction.response.edit_message(content=f"**Activated: {selected_powerup.name}!**\n{self.status_log}", embed=new_embed, view=self)
 
     async def reset_callback(self, interaction):
+        if self.restored: return await self.handle_restored(interaction) # <--- CHECK
         if not await self.check_ownership(interaction): return
         self.reorder_sequence.clear()
+        self.save_view_state() 
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
@@ -598,26 +640,34 @@ class GameView(discord.ui.View):
         await interaction.response.edit_message(content=self.status_log, embed=embed, view=self)
 
     async def answer_callback(self, interaction):
+        if self.restored: return await self.handle_restored(interaction) # <--- CHECK
         if not await self.check_ownership(interaction): return
         if self.player.current_q_timestamp == 0: return
         parts = interaction.data['custom_id'].split("_")
         clicked_display_idx = int(parts[1])
+        
         if self.current_q.type == QuestionType.REORDER:
-            orig_idx = self.displayed_to_original_map[clicked_display_idx]
-            self.reorder_sequence.append(orig_idx)
-            self.clear_items()
-            self.setup_answer_buttons()
-            self.setup_powerup_buttons()
-            rank_str = self.get_rank_str()
-            seq_text = "**Current Sequence:**\n"
-            for idx, o_idx in enumerate(self.reorder_sequence):
-                seq_text += f"{idx+1}. {self.current_q.options[o_idx]}\n"
-            full_content = f"{self.status_log}\n\n{seq_text}"
-            embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, rank_str)
-            await interaction.response.edit_message(content=full_content, embed=embed, view=self)
+            if clicked_display_idx in self.displayed_to_original_map:
+                orig_idx = self.displayed_to_original_map[clicked_display_idx]
+                self.reorder_sequence.append(orig_idx)
+                self.save_view_state()
+                
+                self.clear_items()
+                self.setup_answer_buttons()
+                self.setup_powerup_buttons()
+                rank_str = self.get_rank_str()
+                seq_text = "**Current Sequence:**\n"
+                for idx, o_idx in enumerate(self.reorder_sequence):
+                    seq_text += f"{idx+1}. {self.current_q.options[o_idx]}\n"
+                full_content = f"{self.status_log}\n\n{seq_text}"
+                embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, rank_str)
+                await interaction.response.edit_message(content=full_content, embed=embed, view=self)
+            
         elif self.current_q.allow_multi_select:
             if clicked_display_idx in self.current_selections: self.current_selections.remove(clicked_display_idx)
             else: self.current_selections.add(clicked_display_idx)
+            self.save_view_state()
+            
             self.clear_items()
             self.setup_answer_buttons()
             self.setup_powerup_buttons()
@@ -627,6 +677,7 @@ class GameView(discord.ui.View):
             await self.process_submission(interaction, [clicked_display_idx])
 
     async def submit_callback(self, interaction):
+        if self.restored: return await self.handle_restored(interaction) # <--- CHECK
         if not await self.check_ownership(interaction): return
         if self.player.current_q_timestamp == 0: return
         if self.current_q.type == QuestionType.REORDER:
@@ -644,6 +695,7 @@ class GameView(discord.ui.View):
         else:
             orig_indices = [self.displayed_to_original_map[i] for i in selected_display_indices]
             is_correct = set(orig_indices) == set(self.current_q.correct_indices)
+            
         chosen_text = ", ".join([self.current_q.options[i] for i in orig_indices])
         time_taken = time.time() - self.question_start_time
         for p in self.player.active_powerups:
@@ -651,24 +703,29 @@ class GameView(discord.ui.View):
                 time_taken = 0.5
                 break
         is_timeout = time_taken > self.current_q.time_limit
+        
         self.player.answers_log.append({
             "q_index": self.real_q_index, "q_text": self.current_q.text, "chosen": orig_indices, "chosen_text": chosen_text, "is_correct": is_correct, "time": time_taken, "points": 0
         })
+        
         if not is_correct:
             for p in self.player.active_powerups:
                 if p.effect == EffectType.IMMUNITY:
                     self.player.active_powerups.remove(p)
                     self.current_selections.clear()
                     self.reorder_sequence.clear()
+                    self.save_view_state()
                     embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
                     self.clear_items()
                     self.setup_answer_buttons()
                     self.setup_powerup_buttons()
                     await interaction.response.edit_message(content=f"🛡️ **Immunity used!**", embed=embed, view=self)
                     return
+        
         points = 0
         new_pup = None
         gift_feedback = None
+        
         if is_correct and not is_timeout:
             base_points = self.calculate_score(time_taken, self.current_q.time_limit)
             points = int(base_points * self.current_q.weight)
@@ -678,11 +735,13 @@ class GameView(discord.ui.View):
             self.player.streak += 1
             self.player.correct_answers += 1
             self.player.answers_log[-1]['points'] = points
+            
             if len(self.player.inventory) < 3 and random.random() < 0.4:
                 pool = [p for p in load_powerups() if p.name not in [x.name for x in self.player.inventory]]
                 if pool:
                     new_pup = random.choice(pool)
                     self.player.inventory.append(new_pup)
+            
             for p in self.player.active_powerups:
                 if p.effect == EffectType.GIFT:
                     others = [x for x in self.session.players.values() if x.user_id != self.player.user_id]
@@ -699,9 +758,12 @@ class GameView(discord.ui.View):
                 self.player.score = 0
             if not any(p.effect == EffectType.STREAK_SAVER for p in self.player.active_powerups):
                 self.player.streak = 0
+        
+        self.player.view_state = {} 
         self.player.active_powerups.clear()
         self.player.current_q_index += 1
         self.player.current_q_timestamp = 0 
+        
         await self.show_intermission(interaction, is_correct, points, new_pup, is_timeout, gift_feedback)
 
     def calculate_score(self, time_taken, limit):
@@ -738,13 +800,99 @@ class GameView(discord.ui.View):
 class Gameplay(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.state_loaded = False
+        self.bot.loop.create_task(self.load_state())
         self.dashboard_update.start()
         self.bump_task.start()
         self.check_timeouts.start()
     def cog_unload(self):
+        if self.state_loaded: 
+            self.save_state()
         self.dashboard_update.cancel()
         self.bump_task.cancel()
         self.check_timeouts.cancel()
+
+    def save_state(self):
+        if not self.state_loaded: return
+        data = {}
+        for cid, session in active_sessions.items():
+            data[str(cid)] = session.to_dict()
+        try:
+            with open(STATE_FILE, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Failed to save state: {e}")
+
+    async def load_state(self):
+        await self.bot.wait_until_ready()
+        if not os.path.exists(STATE_FILE): 
+            self.state_loaded = True
+            return
+        
+        try:
+            with open(STATE_FILE, 'r') as f:
+                data = json.load(f)
+            
+            for cid_str, s_data in data.items():
+                try:
+                    # 1. Reconstruct Quiz
+                    quiz_name = s_data['quiz_name']
+                    quiz = load_quiz(quiz_name)
+                    if not quiz: continue
+                    
+                    # 2. Reconstruct Session
+                    channel_id = int(s_data['channel_id'])
+                    session = GameSession(channel_id, quiz)
+                    session.is_running = s_data['is_running']
+                    session.start_time = s_data['start_time']
+                    session.end_time = s_data.get('end_time', 0)
+                    session.global_powerplay_active = s_data.get('global_powerplay_active', False)
+                    session.global_powerplay_end = s_data.get('global_powerplay_end', 0)
+                    session.question_stats = {int(k): v for k, v in s_data['question_stats'].items()}
+                    session.powerup_usage_log = s_data.get('powerup_usage_log', [])
+                    session.bump_mode = s_data.get('bump_mode')
+                    session.bump_interval = s_data.get('bump_interval', 0)
+                    session.bump_threshold = s_data.get('bump_threshold', 0)
+                    session.last_bump_time = s_data.get('last_bump_time', 0)
+                    session.message_counter = s_data.get('message_counter', 0)
+
+                    # 3. Reconstruct Players
+                    for uid_str, p_data in s_data['players'].items():
+                        session.players[int(uid_str)] = Player.from_dict(p_data)
+
+                    # 4. Recover & Refresh Messages
+                    msg_ids = s_data.get('msg_ids', {})
+                    channel = self.bot.get_channel(channel_id)
+                    if channel:
+                        if msg_ids.get('lobby'):
+                            try: session.lobby_msg = await channel.fetch_message(msg_ids['lobby'])
+                            except: pass
+                        if msg_ids.get('dashboard'):
+                            try: session.dashboard_msg = await channel.fetch_message(msg_ids['dashboard'])
+                            except: pass
+                        if msg_ids.get('connector'):
+                            try: session.connector_msg = await channel.fetch_message(msg_ids['connector'])
+                            except: pass
+
+                        # FORCE REFRESH: This deletes old msgs and sends a fresh Leaderboard
+                        await do_bump(session, channel)
+
+                    # 5. REGISTER VIEWS (Restored Mode)
+                    for player in session.players.values():
+                        if not player.completed:
+                            # restored=True means any click triggers "Board Expired"
+                            view = GameView(session, player, restored=True)
+                            self.bot.add_view(view)
+
+                    active_sessions[channel_id] = session
+                    print(f"Restored session for channel {channel_id}")
+                except Exception as e:
+                    print(f"Error restoring session {cid_str}: {e}")
+                    
+        except Exception as e:
+            print(f"Failed to load state: {e}")
+        
+        self.state_loaded = True
 
     async def session_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
         sessions = get_session_lookup(limit=25)
@@ -1075,6 +1223,8 @@ class Gameplay(commands.Cog):
 
     @tasks.loop(seconds=5)
     async def dashboard_update(self):
+        if not self.state_loaded: return
+        self.save_state() # CHANGED: Auto-save every loop
         for session in active_sessions.values():
             if session.is_running and hasattr(session, 'dashboard_msg') and session.dashboard_msg:
                 sorted_players = sorted(session.players.values(), key=lambda p: p.score, reverse=True)

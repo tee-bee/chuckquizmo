@@ -19,6 +19,42 @@
             "explanation": null,
             "image_url": null,
             "allow_multi_select": false
+        },
+        {
+            "text": "Who is the first boss fought in *Metroid Prime 4: Beyond*?",
+            "options": [
+                "Aberax",
+                "Berserker Lord",
+                "Dark Alpha Splinter",
+                "Parasite Queen"
+            ],
+            "correct_indices": [
+                0
+            ],
+            "type": "standard",
+            "time_limit": 30,
+            "weight": 1.0,
+            "explanation": null,
+            "image_url": null,
+            "allow_multi_select": false
+        },
+        {
+            "text": "Where does *Metroid Dread* take place?",
+            "options": [
+                "Zebes",
+                "SR388",
+                "ZDR",
+                "Kraid"
+            ],
+            "correct_indices": [
+                2
+            ],
+            "type": "standard",
+            "time_limit": 30,
+            "weight": 1.0,
+            "explanation": null,
+            "image_url": null,
+            "allow_multi_select": false
         }
     ]
 }
