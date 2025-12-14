@@ -16,10 +16,23 @@ from utils.db_manager import (
 )
 
 ADMIN_IDS = [368792134645448704, 193855542366568448]
+SERVER_ID = 238080556708003851
+ROLE_ID = 983357933565919252
+
+def is_privileged(interaction: discord.Interaction) -> bool:
+    # 1. Global Admin Override
+    if interaction.user.id in ADMIN_IDS:
+        return True
+    
+    # 2. Server Specific Role Check
+    if interaction.guild_id == SERVER_ID:
+        role = interaction.guild.get_role(ROLE_ID)
+        if role and role in interaction.user.roles:
+            return True
+            
+    return False
 STATE_FILE = "data/active_sessions.json"
 
-def is_hardcoded_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
 
 active_sessions = {}
 
@@ -439,7 +452,7 @@ class LiveDashboardView(discord.ui.View):
         await interaction.response.send_message(f"🏅 **Your Rank:** #{rank} / {total}\n**Score:** {player.score} pts\n**Streak:** {player.streak} 🔥", ephemeral=True)
     @discord.ui.button(label="End Game (Admin)", style=discord.ButtonStyle.danger, row=1)
     async def end_game(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_hardcoded_admin(interaction.user.id):
+        if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
         await finish_game_logic(self.session, interaction)
@@ -931,7 +944,7 @@ class Gameplay(commands.Cog):
     @app_commands.command(name="results", description="Generate formatted results for a session")
     @app_commands.autocomplete(session_id=session_autocomplete)
     async def results_cmd(self, interaction: discord.Interaction, session_id: int, channel: discord.TextChannel, custom_message: str, emoji: str = "💀"):
-        if not is_hardcoded_admin(interaction.user.id):
+        if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
         s_data, players, q_data = get_session_details(session_id)
@@ -1005,7 +1018,7 @@ class Gameplay(commands.Cog):
     @app_commands.command(name="start_quiz", description="Load a quiz (Admin)")
     @app_commands.autocomplete(quiz_name=quiz_autocomplete)
     async def start_quiz(self, interaction: discord.Interaction, quiz_name: str):
-        if not is_hardcoded_admin(interaction.user.id):
+        if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
         quiz = load_quiz(quiz_name)
@@ -1025,7 +1038,7 @@ class Gameplay(commands.Cog):
 
     @app_commands.command(name="stop_quiz", description="Failsafe stop current quiz")
     async def stop_quiz(self, interaction: discord.Interaction):
-        if not is_hardcoded_admin(interaction.user.id):
+        if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
         session = active_sessions.get(interaction.channel_id)
@@ -1057,7 +1070,7 @@ class Gameplay(commands.Cog):
     ])
     @app_commands.autocomplete(powerup_name=powerup_autocomplete)
     async def debug(self, interaction: discord.Interaction, action: str, powerup_name: str = None):
-        if not is_hardcoded_admin(interaction.user.id):
+        if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
         session = active_sessions.get(interaction.channel_id)
@@ -1125,7 +1138,7 @@ class Gameplay(commands.Cog):
         app_commands.Choice(name="Off / Clear", value="off")
     ])
     async def bump_cmd(self, interaction: discord.Interaction, mode: str, value: int = 0):
-        if not is_hardcoded_admin(interaction.user.id):
+        if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
         session = active_sessions.get(interaction.channel_id)
@@ -1177,7 +1190,7 @@ class Gameplay(commands.Cog):
 
     @app_commands.command(name="history", description="View past quiz reports (Admin)")
     async def view_history(self, interaction: discord.Interaction):
-        if not is_hardcoded_admin(interaction.user.id):
+        if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
         view = HistoryPaginationView()
