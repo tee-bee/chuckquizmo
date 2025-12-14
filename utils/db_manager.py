@@ -297,3 +297,35 @@ def get_question_analytics(session_id):
         if r['is_correct']: data["correct_count"] += 1
         data["responses"].append({"player": r['name'], "answer": r['chosen_text'], "correct": bool(r['is_correct']), "time": r['time_taken']})
     return analytics
+
+def delete_session(session_id):
+    conn = get_connection()
+    c = conn.cursor()
+    # Delete dependent rows first (Foreign Keys)
+    c.execute("DELETE FROM answers WHERE player_db_id IN (SELECT id FROM players WHERE session_id = ?)", (session_id,))
+    c.execute("DELETE FROM players WHERE session_id = ?", (session_id,))
+    c.execute("DELETE FROM powerup_usage WHERE session_id = ?", (session_id,))
+    c.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+
+def delete_sessions_range(start_id, end_id):
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Handle reverse inputs
+    low = min(start_id, end_id)
+    high = max(start_id, end_id)
+    
+    # Delete dependent rows in batch
+    c.execute("DELETE FROM answers WHERE player_db_id IN (SELECT id FROM players WHERE session_id BETWEEN ? AND ?)", (low, high))
+    c.execute("DELETE FROM players WHERE session_id BETWEEN ? AND ?", (low, high))
+    c.execute("DELETE FROM powerup_usage WHERE session_id BETWEEN ? AND ?", (low, high))
+    
+    # Delete sessions
+    c.execute("DELETE FROM sessions WHERE session_id BETWEEN ? AND ?", (low, high))
+    deleted_count = c.rowcount
+    
+    conn.commit()
+    conn.close()
+    return deleted_count

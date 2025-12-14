@@ -89,3 +89,16 @@ def save_all_powerups(powerups_list):
     data = [p.to_dict() for p in powerups_list]
     with open(POWERUP_FILE, 'w') as f:
         json.dump(data, f, indent=4)
+        
+def delete_quiz_file(name: str) -> bool:
+    quiz_map = get_quiz_lookup()
+    if name in quiz_map:
+        filename = quiz_map[name]
+    else:
+        filename = name if name.endswith(".json") else f"{name}.json"
+    
+    path = os.path.join(QUIZ_DIR, filename)
+    if os.path.exists(path):
+        os.remove(path)
+        return True
+    return False
