@@ -1043,6 +1043,45 @@ class Gameplay(commands.Cog):
             ephemeral=True
         )
 
+    @app_commands.command(name="launch", description="Force start the game (Bypasses Lobby Button)")
+    async def launch_game(self, interaction: discord.Interaction):
+        # 1. Permission Check
+        if not is_privileged(interaction):
+            await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
+            return
+            
+        # 2. Session Check
+        session = active_sessions.get(interaction.channel_id)
+        if not session:
+            await interaction.response.send_message("No active session to launch.", ephemeral=True)
+            return
+            
+        if session.is_running:
+            await interaction.response.send_message("Game is already running!", ephemeral=True)
+            return
+
+        if not session.players:
+            await interaction.response.send_message("No players joined yet.", ephemeral=True)
+            return
+
+        # 3. Clean up the old Lobby Message so chat stays clean
+        if session.lobby_msg:
+            try: await session.lobby_msg.delete()
+            except: pass
+            session.lobby_msg = None
+
+        # 4. Initialize Game State
+        session.is_running = True
+        session.start_time = time.time()
+
+        # 5. Post Dashboard & Connector (Same as button logic)
+        dash_embed = discord.Embed(title="📊 Live Leaderboard", description="Starting...", color=0xFFD700)
+        session.dashboard_msg = await interaction.channel.send(embed=dash_embed, view=LiveDashboardView(session))
+        session.connector_msg = await interaction.channel.send("🚀 **Game is Live!**", view=StartConnector(session))
+
+        # 6. Confirm Command Execution
+        await interaction.response.send_message("✅ **Game Launched!**", ephemeral=True)
+    
     @app_commands.command(name="stop_quiz", description="Failsafe stop current quiz")
     async def stop_quiz(self, interaction: discord.Interaction):
         if not is_privileged(interaction):
