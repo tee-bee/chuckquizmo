@@ -817,6 +817,7 @@ class Gameplay(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.state_loaded = False
+        self.startup_time = time.time()
         self.bot.loop.create_task(self.load_state())
         self.dashboard_update.start()
         self.bump_task.start()
@@ -1072,37 +1073,84 @@ class Gameplay(commands.Cog):
     @app_commands.command(name="debug", description="Admin Debug Tools")
     @app_commands.choices(action=[
         app_commands.Choice(name="Give Powerup", value="give_pup"),
-        app_commands.Choice(name="Random Answer (Self)", value="rand_ans")
+        app_commands.Choice(name="Random Answer (Self)", value="rand_ans"),
+        app_commands.Choice(name="Ping / Uptime", value="ping")
     ])
     @app_commands.autocomplete(powerup_name=powerup_autocomplete)
     async def debug(self, interaction: discord.Interaction, action: str, powerup_name: str = None):
         if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
+
+        # --- 1. HANDLE PING/UPTIME ---
+        if action == "ping":
+            # Helper to format seconds into d h m s
+            def format_uptime(seconds):
+                minutes, seconds = divmod(int(seconds), 60)
+                hours, minutes = divmod(minutes, 60)
+                days, hours = divmod(hours, 24)
+                return f"{days}d {hours}h {minutes}m {seconds}s"
+
+            now = time.time()
+            
+            # Bot Uptime
+            bot_uptime_sec = now - self.bot.boot_time
+            bot_str = format_uptime(bot_uptime_sec)
+            
+            # Cogs Uptime
+            cogs_desc = ""
+            # Sort extensions alphabetically
+            for ext_name, load_time in sorted(self.bot.extension_times.items()):
+                diff = now - load_time
+                # Highlight recently reloaded cogs (less than 1 min ago)
+                icon = "🔄" if diff < 60 else "🟢" 
+                cogs_desc += f"{icon} **{ext_name}:** `{format_uptime(diff)}`\n"
+
+            latency = round(self.bot.latency * 1000)
+            
+            embed = discord.Embed(title="🏓 System Status", color=0x00FF00)
+            embed.add_field(name="Latency", value=f"`{latency}ms`", inline=True)
+            embed.add_field(name="Bot Uptime", value=f"`{bot_str}`", inline=True)
+            if cogs_desc:
+                embed.add_field(name="Extensions / Cogs Uptime", value=cogs_desc, inline=False)
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # --- 2. VALIDATE SESSION (Required for other actions) ---
         session = active_sessions.get(interaction.channel_id)
         if not session:
             await interaction.response.send_message("No active session.", ephemeral=True)
             return
+        
         player = session.players.get(interaction.user.id)
         if not player:
             await interaction.response.send_message("You are not in the game.", ephemeral=True)
             return
+
+        # --- 3. GAME ACTIONS ---
         if action == "give_pup":
             all_pups = load_powerups()
             target = next((p for p in all_pups if p.name == powerup_name), None)
             if target:
                 player.inventory.append(target)
                 await interaction.response.send_message(f"✅ Added {target.name}", ephemeral=True)
-            else: await interaction.response.send_message("Powerup not found.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Powerup not found.", ephemeral=True)
+        
         elif action == "rand_ans":
             if not session.is_running or player.completed:
                 await interaction.response.send_message("Game not running or you finished.", ephemeral=True)
                 return
+            
             view = GameView(session, player) 
             view.setup_answer_buttons() 
-            options_count = len(view.current_q.options)
-            rand_display_idx = random.randint(0, options_count - 1)
-            await view.process_submission(interaction, [rand_display_idx])
+            if view.current_q and view.current_q.options:
+                options_count = len(view.current_q.options)
+                rand_display_idx = random.randint(0, options_count - 1)
+                await view.process_submission(interaction, [rand_display_idx])
+            else:
+                await interaction.response.send_message("Error finding question options.", ephemeral=True)
 
     @app_commands.command(name="leaderboard", description="View aggregate leaderboards")
     @app_commands.autocomplete(duration=duration_autocomplete)
