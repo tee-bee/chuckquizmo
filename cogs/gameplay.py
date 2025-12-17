@@ -1231,8 +1231,6 @@ class Gameplay(commands.Cog):
 
     @app_commands.command(name="leaderboard", description="View aggregate leaderboards")
     @app_commands.autocomplete(duration=duration_autocomplete)
-    @app_commands.command(name="leaderboard", description="View aggregate leaderboards")
-    @app_commands.autocomplete(duration=duration_autocomplete)
     async def leaderboard(self, interaction: discord.Interaction, duration: str):
         session_ids = get_session_ids_by_limit(duration)
         if not session_ids:
