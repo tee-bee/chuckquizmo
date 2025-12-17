@@ -276,29 +276,67 @@ class HistoryPaginationView(discord.ui.View):
         await interaction.response.edit_message(view=self)
 
 class LeaderboardView(discord.ui.View):
-    def __init__(self, data, duration_label):
+    def __init__(self, data, duration_label, author_id):
         super().__init__(timeout=300)
         self.data = data
         self.duration_label = duration_label
+        self.author_id = author_id # Store the command caller's ID
         self.mode = "score" 
         self.update_embed()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # Only allow the person who ran the command to click buttons
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("⛔ These buttons are not for you.", ephemeral=True)
+            return False
+        return True
+
     def update_embed(self):
         title = f"🏆 Leaderboard ({self.duration_label})"
-        desc = f"Sorted by: **{'Average Score' if self.mode == 'score' else 'Accuracy'}**\n\n"
-        if self.mode == "score": sorted_data = sorted(self.data, key=lambda x: x['avg_score'], reverse=True)
-        else: sorted_data = sorted(self.data, key=lambda x: x['accuracy'], reverse=True)
+        
+        # Sort Data based on mode
+        if self.mode == "score": 
+            sorted_data = sorted(self.data, key=lambda x: x['avg_score'], reverse=True)
+            sort_desc = "Average Score"
+        elif self.mode == "accuracy": 
+            sorted_data = sorted(self.data, key=lambda x: x['accuracy'], reverse=True)
+            sort_desc = "Accuracy"
+        elif self.mode == "total":
+            # Calculate Total Score (Avg * Games)
+            sorted_data = sorted(self.data, key=lambda x: x['avg_score'] * x['games'], reverse=True)
+            sort_desc = "Total Score (All Games)"
+
+        desc = f"Sorted by: **{sort_desc}**\n\n"
+        
         for i, entry in enumerate(sorted_data[:15]): 
-            val = f"{entry['avg_score']} pts" if self.mode == "score" else f"{entry['accuracy']:.1f}%"
+            if self.mode == "accuracy":
+                val = f"{entry['accuracy']:.1f}%"
+            elif self.mode == "total":
+                # Calculate total on the fly for display
+                total_pts = int(entry['avg_score'] * entry['games'])
+                val = f"{total_pts} pts (Total)"
+            else:
+                val = f"{entry['avg_score']} pts (Avg)"
+            
             desc += f"{i+1}. **{entry['name']}** — {val} ({entry['games']} games)\n"
+            
         self.embed = discord.Embed(title=title, description=desc, color=0xFFD700)
-    @discord.ui.button(label="Sort by Avg Score", style=discord.ButtonStyle.primary)
+
+    @discord.ui.button(label="Sort by Avg.", style=discord.ButtonStyle.primary)
     async def sort_score(self, interaction, button):
         self.mode = "score"
         self.update_embed()
         await interaction.response.edit_message(embed=self.embed, view=self)
-    @discord.ui.button(label="Sort by Accuracy", style=discord.ButtonStyle.success)
+
+    @discord.ui.button(label="Sort by Acc.", style=discord.ButtonStyle.success)
     async def sort_acc(self, interaction, button):
         self.mode = "accuracy"
+        self.update_embed()
+        await interaction.response.edit_message(embed=self.embed, view=self)
+
+    @discord.ui.button(label="Show Total Score", style=discord.ButtonStyle.blurple)
+    async def sort_total(self, interaction, button):
+        self.mode = "total"
         self.update_embed()
         await interaction.response.edit_message(embed=self.embed, view=self)
 
@@ -1193,16 +1231,20 @@ class Gameplay(commands.Cog):
 
     @app_commands.command(name="leaderboard", description="View aggregate leaderboards")
     @app_commands.autocomplete(duration=duration_autocomplete)
+    @app_commands.command(name="leaderboard", description="View aggregate leaderboards")
+    @app_commands.autocomplete(duration=duration_autocomplete)
     async def leaderboard(self, interaction: discord.Interaction, duration: str):
         session_ids = get_session_ids_by_limit(duration)
         if not session_ids:
-            await interaction.response.send_message("No data.", ephemeral=True)
+            await interaction.response.send_message("No data.", ephemeral=False)
             return
         data = get_leaderboard_data(session_ids)
         if not data:
-            await interaction.response.send_message("No data.", ephemeral=True)
+            await interaction.response.send_message("No data.", ephemeral=False)
             return
-        view = LeaderboardView(data, duration)
+        
+        # Pass the interaction.user.id to restrict button usage
+        view = LeaderboardView(data, duration, interaction.user.id)
         await interaction.response.send_message(embed=view.embed, view=view, ephemeral=False)
 
     @app_commands.command(name="roundup", description="View aggregate statistics")
