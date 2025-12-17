@@ -322,13 +322,13 @@ class LeaderboardView(discord.ui.View):
             
         self.embed = discord.Embed(title=title, description=desc, color=0xFFD700)
 
-    @discord.ui.button(label="Sort by Avg.", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Sort by Avg.", style=discord.ButtonStyle.blurple)
     async def sort_score(self, interaction, button):
         self.mode = "score"
         self.update_embed()
         await interaction.response.edit_message(embed=self.embed, view=self)
 
-    @discord.ui.button(label="Sort by Acc.", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Sort by Acc.", style=discord.ButtonStyle.blurple)
     async def sort_acc(self, interaction, button):
         self.mode = "accuracy"
         self.update_embed()
