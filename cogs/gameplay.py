@@ -813,8 +813,21 @@ class GameView(discord.ui.View):
             if not any(p.effect == EffectType.STREAK_SAVER for p in self.player.active_powerups):
                 self.player.streak = 0
         
+        # --- MODIFIED CLEANUP LOGIC ---
         self.player.view_state = {} 
-        self.player.active_powerups.clear()
+        
+        if is_correct:
+            # If Correct: Keep protection items (Immunity/Streak Saver) because they weren't needed.
+            # Consume everything else (Multipliers, Gifts, One-time modifiers like 50-50).
+            self.player.active_powerups = [
+                p for p in self.player.active_powerups 
+                if p.effect in [EffectType.STREAK_SAVER, EffectType.IMMUNITY]
+            ]
+        else:
+            # If Incorrect: We used our chances. Clear everything.
+            # (Immunity was already removed in the block above if it triggered)
+            self.player.active_powerups.clear()
+
         self.player.current_q_index += 1
         self.player.current_q_timestamp = 0 
         
@@ -1301,15 +1314,52 @@ class Gameplay(commands.Cog):
             session.message_counter = 0
             await interaction.response.send_message(f"✅ Auto-bump set to every {value} messages.", ephemeral=True)
 
-    @tasks.loop(seconds=10)
-    async def bump_task(self):
+    @tasks.loop(seconds=1)
+    async def check_timeouts(self):
+        now = time.time()
         for session in active_sessions.values():
-            if session.bump_mode == "timer":
-                if time.time() - session.last_bump_time > session.bump_interval:
-                    channel = self.bot.get_channel(session.channel_id)
-                    if channel:
-                        await do_bump(session, channel)
-                        session.last_bump_time = time.time()
+            if not session.is_running: continue
+            for player in session.players.values():
+                if player.completed or player.current_q_timestamp == 0: continue
+                is_frozen = any(p.effect == EffectType.TIME_FREEZE for p in player.active_powerups)
+                if is_frozen: continue
+                q_idx = player.question_order[player.current_q_index]
+                q = session.quiz.questions[q_idx]
+                if now > (player.current_q_timestamp + q.time_limit + 1):
+                    player.incorrect_answers += 1
+                    session.question_stats[q_idx] += 1
+                    if any(p.effect == EffectType.DOUBLE_JEOPARDY for p in player.active_powerups): player.score = 0
+                    if not any(p.effect == EffectType.STREAK_SAVER for p in player.active_powerups): player.streak = 0
+                    
+                    player.answers_log.append({
+                        "q_index": q_idx, "q_text": q.text, "chosen": [], "chosen_text": "TIMEOUT", "is_correct": False, "time": q.time_limit, "points": 0
+                    })
+                    
+                    # --- MODIFIED TIMEOUT CLEANUP ---
+                    # Timeout consumes everything (especially Streak Saver), EXCEPT Immunity.
+                    # Logic: You didn't "use" Immunity because you didn't pick a wrong answer.
+                    player.active_powerups = [
+                        p for p in player.active_powerups 
+                        if p.effect == EffectType.IMMUNITY
+                    ]
+                    
+                    player.current_q_index += 1
+                    player.current_q_timestamp = 0 
+                    if player.board_message:
+                        try:
+                            is_last = player.current_q_index >= len(player.question_order)
+                            color = 0xFF0000
+                            embed = discord.Embed(title="⏰ Time's Up!", description=f"**Points:** +0\n**Streak:** {player.streak} 🔥\n", color=color)
+                            if q.explanation: embed.description += f"\n**Explanation:**\n{q.explanation}"
+                            if q.type == QuestionType.REORDER:
+                                ans_str = " -> ".join([q.options[i] for i in q.correct_indices])
+                                embed.add_field(name="Correct Sequence", value=ans_str)
+                            else:
+                                ans_str = ", ".join([q.options[i] for i in q.correct_indices])
+                                embed.add_field(name="Correct Answer", value=ans_str)
+                            view = IntermissionView(session, player, False, ans_str, 0, None, is_last_question=is_last)
+                            await player.board_message.edit(content=None, embed=embed, view=view)
+                        except: pass
 
     @commands.Cog.listener()
     async def on_message(self, message):
