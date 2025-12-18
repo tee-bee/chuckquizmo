@@ -1432,6 +1432,16 @@ class Gameplay(commands.Cog):
                 embed = discord.Embed(title="📊 Live Leaderboard", description=desc, color=0xFFD700)
                 try: await session.dashboard_msg.edit(embed=embed)
                 except: pass
-
+                
+    @tasks.loop(seconds=10)
+    async def bump_task(self):
+        for session in active_sessions.values():
+            if session.bump_mode == "timer":
+                if time.time() - session.last_bump_time > session.bump_interval:
+                    channel = self.bot.get_channel(session.channel_id)
+                    if channel:
+                        await do_bump(session, channel)
+                        session.last_bump_time = time.time()
+                        
 async def setup(bot):
     await bot.add_cog(Gameplay(bot))
