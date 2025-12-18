@@ -75,6 +75,14 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
     embed.set_author(name=f"Score: {player.score} pts | Rank: {rank_str}", icon_url=player.avatar_url or None)
     
     desc = ""
+    
+    # --- VISUALIZE ACTIVE POWERUPS ---
+    # This makes them persistent inside the blue box!
+    if player.active_powerups:
+        pup_names = [f"**{p.name}**" for p in player.active_powerups]
+        desc += f"⚡ **Active Effects:** {' | '.join(pup_names)}\n\n"
+    # ---------------------------------
+
     is_frozen = any(p.effect == EffectType.TIME_FREEZE for p in player.active_powerups)
 
     if is_frozen: desc += "❄️ **TIMER FROZEN** ❄️\n(Max speed bonus secured)\n"
@@ -648,7 +656,7 @@ class GameView(discord.ui.View):
         return True
 
     async def powerup_callback(self, interaction):
-        if self.restored: return await self.handle_restored(interaction) # <--- CHECK
+        if self.restored: return await self.handle_restored(interaction)
         if not await self.check_ownership(interaction): return
         if len(self.player.active_powerups) > 0:
             await interaction.response.send_message("❌ One powerup per turn!", ephemeral=True)
@@ -676,11 +684,16 @@ class GameView(discord.ui.View):
                         asyncio.create_task(push_update_to_player(self.session, p, glitch=False))
             asyncio.create_task(revert())
             
+        # --- FIX: SAVE STATUS TO LOG ---
+        # This ensures the text stays if the user clicks other buttons
+        self.status_log = f"⚡ **Activated: {selected_powerup.name}!**"
+        # -------------------------------
+
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
         new_embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
-        await interaction.response.edit_message(content=f"**Activated: {selected_powerup.name}!**\n{self.status_log}", embed=new_embed, view=self)
+        await interaction.response.edit_message(content=self.status_log, embed=new_embed, view=self)
 
     async def reset_callback(self, interaction):
         if self.restored: return await self.handle_restored(interaction) # <--- CHECK
