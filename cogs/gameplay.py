@@ -61,7 +61,7 @@ def glitch_text(text: str) -> str:
             chars[i] = random.choice(["#", "$", "%", "&", "@", "?", "!", "0", "1"])
     return "".join(chars)
 
-def build_game_embed(player: Player, question: Question, question_num: int, rank_str: str, current_sequence=None, glitch_active=False) -> discord.Embed:
+def build_game_embed(player: Player, question: Question, question_num: int, rank_str: str, current_sequence=None, glitch_active=False, powerplay_active=False) -> discord.Embed:
     q_text = question.text
     type_text = ""
     if question.type == QuestionType.REORDER: type_text = "(Order Sequence)"
@@ -77,11 +77,15 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
     desc = ""
     
     # --- VISUALIZE ACTIVE POWERUPS ---
-    # This makes them persistent inside the blue box!
     if player.active_powerups:
         pup_names = [f"**{p.name}**" for p in player.active_powerups]
-        desc += f"⚡ **Active Effects:** {' | '.join(pup_names)}\n\n"
-    # ---------------------------------
+        desc += f"⚡ **Active:** {' | '.join(pup_names)}\n"
+    
+    # --- VISUALIZE POWER PLAY (GLOBAL) ---
+    if powerplay_active:
+        desc += "🔥 **POWER PLAY ACTIVE: 1.5x POINTS!** 🔥\n"
+    
+    desc += "\n" # Spacing
 
     is_frozen = any(p.effect == EffectType.TIME_FREEZE for p in player.active_powerups)
 
@@ -123,7 +127,14 @@ async def push_update_to_player(session: GameSession, player: Player, glitch=Fal
         sorted_players = sorted(session.players.values(), key=lambda p: p.score, reverse=True)
         try: rank = sorted_players.index(player) + 1
         except: rank = 0
-        embed = build_game_embed(player, q, player.current_q_index + 1, f"#{rank}", glitch_active=glitch)
+        
+        # PASS POWERPLAY STATUS HERE
+        embed = build_game_embed(
+            player, q, player.current_q_index + 1, f"#{rank}", 
+            glitch_active=glitch, 
+            powerplay_active=session.global_powerplay_active
+        )
+        
         await player.board_message.edit(embed=embed)
     except: pass
 
@@ -137,7 +148,13 @@ async def open_board_logic(interaction: discord.Interaction, session: GameSessio
     try: rank = sorted_players.index(player) + 1
     except: rank = 0
     rank_str = f"#{rank}"
-    embed = build_game_embed(player, q1, player.current_q_index + 1, rank_str)
+    
+    # PASS POWERPLAY STATUS
+    embed = build_game_embed(
+        player, q1, player.current_q_index + 1, rank_str,
+        powerplay_active=session.global_powerplay_active
+    )
+    
     view = GameView(session, player)
     if interaction.response.is_done():
         msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
@@ -692,7 +709,7 @@ class GameView(discord.ui.View):
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
-        new_embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
+        new_embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
         await interaction.response.edit_message(content=self.status_log, embed=new_embed, view=self)
 
     async def reset_callback(self, interaction):
@@ -703,7 +720,7 @@ class GameView(discord.ui.View):
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
-        embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
+        embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
         await interaction.response.edit_message(content=self.status_log, embed=embed, view=self)
 
     async def answer_callback(self, interaction):
@@ -738,7 +755,7 @@ class GameView(discord.ui.View):
             self.clear_items()
             self.setup_answer_buttons()
             self.setup_powerup_buttons()
-            embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
+            embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await self.process_submission(interaction, [clicked_display_idx])
@@ -782,7 +799,7 @@ class GameView(discord.ui.View):
                     self.current_selections.clear()
                     self.reorder_sequence.clear()
                     self.save_view_state()
-                    embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
+                    embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
                     self.clear_items()
                     self.setup_answer_buttons()
                     self.setup_powerup_buttons()
@@ -1330,6 +1347,15 @@ class Gameplay(commands.Cog):
     @tasks.loop(seconds=1)
     async def check_timeouts(self):
         now = time.time()
+        
+        # --- FIX: MANAGE POWER PLAY EXPIRATION ---
+        for session in active_sessions.values():
+            if session.global_powerplay_active and now > session.global_powerplay_end:
+                session.global_powerplay_active = False
+                # Optional: Push update to remove the fire icon? 
+                # For now, let's just let it expire silently to save API calls.
+        # -----------------------------------------
+
         for session in active_sessions.values():
             if not session.is_running: continue
             for player in session.players.values():
