@@ -76,16 +76,16 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
     
     desc = ""
     
-    # --- VISUALIZE ACTIVE POWERUPS ---
+    # [CHANGE] Persistent Power-up List
     if player.active_powerups:
         pup_names = [f"**{p.name}**" for p in player.active_powerups]
-        desc += f"⚡ **Active:** {' | '.join(pup_names)}\n"
-    
-    # --- VISUALIZE POWER PLAY (GLOBAL) ---
+        desc += f"⚡ **Active Effects:** {' | '.join(pup_names)}\n"
+
+    # [CHANGE] Power Play Indicator
     if powerplay_active:
         desc += "🔥 **POWER PLAY ACTIVE: 1.5x POINTS!** 🔥\n"
-    
-    desc += "\n" # Spacing
+        
+    desc += "\n" 
 
     is_frozen = any(p.effect == EffectType.TIME_FREEZE for p in player.active_powerups)
 
@@ -127,14 +127,7 @@ async def push_update_to_player(session: GameSession, player: Player, glitch=Fal
         sorted_players = sorted(session.players.values(), key=lambda p: p.score, reverse=True)
         try: rank = sorted_players.index(player) + 1
         except: rank = 0
-        
-        # PASS POWERPLAY STATUS HERE
-        embed = build_game_embed(
-            player, q, player.current_q_index + 1, f"#{rank}", 
-            glitch_active=glitch, 
-            powerplay_active=session.global_powerplay_active
-        )
-        
+        embed = build_game_embed(player, q, player.current_q_index + 1, f"#{rank}", glitch_active=glitch)
         await player.board_message.edit(embed=embed)
     except: pass
 
@@ -148,13 +141,7 @@ async def open_board_logic(interaction: discord.Interaction, session: GameSessio
     try: rank = sorted_players.index(player) + 1
     except: rank = 0
     rank_str = f"#{rank}"
-    
-    # PASS POWERPLAY STATUS
-    embed = build_game_embed(
-        player, q1, player.current_q_index + 1, rank_str,
-        powerplay_active=session.global_powerplay_active
-    )
-    
+    embed = build_game_embed(player, q1, player.current_q_index + 1, rank_str)
     view = GameView(session, player)
     if interaction.response.is_done():
         msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
@@ -305,12 +292,11 @@ class LeaderboardView(discord.ui.View):
         super().__init__(timeout=300)
         self.data = data
         self.duration_label = duration_label
-        self.author_id = author_id # Store the command caller's ID
+        self.author_id = author_id 
         self.mode = "score" 
         self.update_embed()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # Only allow the person who ran the command to click buttons
         if interaction.user.id != self.author_id:
             await interaction.response.send_message("⛔ These buttons are not for you.", ephemeral=True)
             return False
@@ -318,8 +304,6 @@ class LeaderboardView(discord.ui.View):
 
     def update_embed(self):
         title = f"🏆 Leaderboard ({self.duration_label})"
-        
-        # Sort Data based on mode
         if self.mode == "score": 
             sorted_data = sorted(self.data, key=lambda x: x['avg_score'], reverse=True)
             sort_desc = "Average Score"
@@ -327,33 +311,27 @@ class LeaderboardView(discord.ui.View):
             sorted_data = sorted(self.data, key=lambda x: x['accuracy'], reverse=True)
             sort_desc = "Accuracy"
         elif self.mode == "total":
-            # Calculate Total Score (Avg * Games)
             sorted_data = sorted(self.data, key=lambda x: x['avg_score'] * x['games'], reverse=True)
-            sort_desc = "Total Score (All Games)"
+            sort_desc = "Total Score"
 
         desc = f"Sorted by: **{sort_desc}**\n\n"
-        
         for i, entry in enumerate(sorted_data[:15]): 
-            if self.mode == "accuracy":
+            if self.mode == "total":
+                val = f"{int(entry['avg_score'] * entry['games'])} pts (Total)"
+            elif self.mode == "accuracy":
                 val = f"{entry['accuracy']:.1f}%"
-            elif self.mode == "total":
-                # Calculate total on the fly for display
-                total_pts = int(entry['avg_score'] * entry['games'])
-                val = f"{total_pts} pts (Total)"
             else:
                 val = f"{entry['avg_score']} pts (Avg)"
-            
             desc += f"{i+1}. **{entry['name']}** — {val} ({entry['games']} games)\n"
-            
         self.embed = discord.Embed(title=title, description=desc, color=0xFFD700)
 
-    @discord.ui.button(label="Sort by Avg.", style=discord.ButtonStyle.blurple)
+    @discord.ui.button(label="Sort by Avg", style=discord.ButtonStyle.primary)
     async def sort_score(self, interaction, button):
         self.mode = "score"
         self.update_embed()
         await interaction.response.edit_message(embed=self.embed, view=self)
 
-    @discord.ui.button(label="Sort by Acc.", style=discord.ButtonStyle.blurple)
+    @discord.ui.button(label="Sort by Acc", style=discord.ButtonStyle.success)
     async def sort_acc(self, interaction, button):
         self.mode = "accuracy"
         self.update_embed()
@@ -744,7 +722,7 @@ class GameView(discord.ui.View):
                 for idx, o_idx in enumerate(self.reorder_sequence):
                     seq_text += f"{idx+1}. {self.current_q.options[o_idx]}\n"
                 full_content = f"{self.status_log}\n\n{seq_text}"
-                embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, rank_str)
+                embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, rank_str, powerplay_active=self.session.global_powerplay_active)
                 await interaction.response.edit_message(content=full_content, embed=embed, view=self)
             
         elif self.current_q.allow_multi_select:
@@ -755,7 +733,7 @@ class GameView(discord.ui.View):
             self.clear_items()
             self.setup_answer_buttons()
             self.setup_powerup_buttons()
-            embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+            embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await self.process_submission(interaction, [clicked_display_idx])
@@ -1283,8 +1261,7 @@ class Gameplay(commands.Cog):
         if not data:
             await interaction.response.send_message("No data.", ephemeral=False)
             return
-        
-        # Pass the interaction.user.id to restrict button usage
+        # Added author_id
         view = LeaderboardView(data, duration, interaction.user.id)
         await interaction.response.send_message(embed=view.embed, view=view, ephemeral=False)
 
@@ -1348,13 +1325,10 @@ class Gameplay(commands.Cog):
     async def check_timeouts(self):
         now = time.time()
         
-        # --- FIX: MANAGE POWER PLAY EXPIRATION ---
+        # [CHANGE] Auto-expire Power Play
         for session in active_sessions.values():
             if session.global_powerplay_active and now > session.global_powerplay_end:
                 session.global_powerplay_active = False
-                # Optional: Push update to remove the fire icon? 
-                # For now, let's just let it expire silently to save API calls.
-        # -----------------------------------------
 
         for session in active_sessions.values():
             if not session.is_running: continue
@@ -1374,13 +1348,8 @@ class Gameplay(commands.Cog):
                         "q_index": q_idx, "q_text": q.text, "chosen": [], "chosen_text": "TIMEOUT", "is_correct": False, "time": q.time_limit, "points": 0
                     })
                     
-                    # --- MODIFIED TIMEOUT CLEANUP ---
-                    # Timeout consumes everything (especially Streak Saver), EXCEPT Immunity.
-                    # Logic: You didn't "use" Immunity because you didn't pick a wrong answer.
-                    player.active_powerups = [
-                        p for p in player.active_powerups 
-                        if p.effect == EffectType.IMMUNITY
-                    ]
+                    # [CHANGE] Keep Immunity on Timeout
+                    player.active_powerups = [p for p in player.active_powerups if p.effect == EffectType.IMMUNITY]
                     
                     player.current_q_index += 1
                     player.current_q_timestamp = 0 
@@ -1484,3 +1453,4 @@ class Gameplay(commands.Cog):
                         
 async def setup(bot):
     await bot.add_cog(Gameplay(bot))
+
