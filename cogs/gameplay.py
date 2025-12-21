@@ -51,7 +51,6 @@ def register_new_player(session: GameSession, user: discord.User) -> Player:
     random.shuffle(order)
     new_player.question_order = order
     new_player.join_time = time.time()
-    new_player.low_visibility = False
     session.players[user.id] = new_player
     return new_player
 
@@ -72,29 +71,16 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
         q_text = glitch_text(q_text)
         type_text = glitch_text(type_text)
     
-    # [CHANGE] Determine visibility mode
-    low_vis = getattr(player, 'low_visibility', False)
-    content_str = ""
+    # [CHANGE] Always put question text in message content (outside embed)
+    content_str = f"**Q{question_num}: {q_text}** {type_text}"
 
-    if low_vis:
-        # Plain text mode
-        embed_title = f"Q{question_num} {type_text} (See Text Above)"
-        content_str = f"**Q{question_num}: {q_text}** {type_text}"
-        main_desc = "" # Question is in content
-    else:
-        # Standard mode (Extended limits: Question in Description)
-        embed_title = f"Q{question_num} {type_text}"
-        main_desc = f"**{q_text}**\n"
-
-    embed = discord.Embed(title=embed_title, color=0x00ff00)
+    embed = discord.Embed(title=f"Q{question_num} {type_text}", color=0x00ff00)
     embed.set_author(name=f"Score: {player.score} pts | Rank: {rank_str}", icon_url=player.avatar_url or None)
     
     desc = ""
     if glitch_active: desc += "# 👾 YOU’VE BEEN GLITCHED! 👾\n\n"
     
-    # Add Question Text to Embed Description if standard mode
-    desc += main_desc
-    
+    # Embed Description now focuses on Status Effects & Timer
     if player.active_powerups:
         pup_names = [f"**{p.name}**" for p in player.active_powerups]
         desc += f"⚡ **Active Effects:** {' | '.join(pup_names)}\n"
@@ -117,14 +103,8 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
     if question.type == QuestionType.REORDER and current_sequence:
         seq_items = [question.options[i][:15] for i in current_sequence]
         if glitch_active: seq_items = [glitch_text(s) for s in seq_items]
-        
-        # [CHANGE] Handle sequence display based on mode
-        if low_vis:
-             seq_str = " -> ".join(seq_items)
-             content_str += f"\n**Current Sequence:** `{seq_str}`"
-        else:
-             seq_str = " -> ".join(seq_items)
-             desc += f"\n**Current Sequence:**\n`{seq_str}`"
+        seq_str = " -> ".join(seq_items)
+        desc += f"\n**Current Sequence:**\n`{seq_str}`"
 
     embed.description = desc
     if question.image_url: embed.set_image(url=question.image_url)
@@ -155,7 +135,7 @@ async def push_update_to_player(session: GameSession, player: Player, glitch=Fal
         # Retrieve reorder sequence from state if available so it doesn't disappear from UI
         cur_seq = player.view_state.get('reorder')
 
-        embed, content = build_game_embed(
+        embed = build_game_embed(
             player, 
             q, 
             player.current_q_index + 1, 
@@ -164,7 +144,7 @@ async def push_update_to_player(session: GameSession, player: Player, glitch=Fal
             glitch_active=glitch,
             powerplay_active=session.global_powerplay_active 
         )
-        await player.board_message.edit(content=content or None, embed=embed)
+        await player.board_message.edit(content=None, embed=embed)
     except: pass
 
 async def open_board_logic(interaction: discord.Interaction, session: GameSession, player: Player):
@@ -178,14 +158,13 @@ async def open_board_logic(interaction: discord.Interaction, session: GameSessio
     except: rank = 0
     rank_str = f"#{rank}"
     
-    embed, content = build_game_embed(player, q1, player.current_q_index + 1, rank_str, powerplay_active=session.global_powerplay_active)
+    embed = build_game_embed(player, q1, player.current_q_index + 1, rank_str, powerplay_active=session.global_powerplay_active)
     
     view = GameView(session, player)
-    # [CHANGE] Send content if generated
     if interaction.response.is_done():
-        msg = await interaction.followup.send(content=content or None, embed=embed, view=view, ephemeral=True)
+        msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
     else:
-        await interaction.response.send_message(content=content or None, embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         msg = await interaction.original_response()
     player.board_message = msg
 
@@ -238,16 +217,12 @@ async def do_bump(session: GameSession, channel):
             try: await msg.delete()
             except: pass
             setattr(session, attr, None) 
-    if not session.is_running:
-        p_list = "\n".join([p.name for p in session.players.values()])
-        embed = discord.Embed(title=f"Quiz Lobby: {session.quiz.name}", description=f"Type **/join** to participate!\n\n**Players:** {len(session.players)}\n{p_list}")
-        embed.set_footer(text="Type /join to enter!")
-        session.lobby_msg = await channel.send(embed=embed)
-    else:
-        dashboard_view = LiveDashboardView(session)
-        embed = discord.Embed(title="📊 Live Leaderboard", description="Refreshing...", color=0xFFD700)
-        session.dashboard_msg = await channel.send(embed=embed, view=dashboard_view)
-        session.connector_msg = await channel.send("🚀 **Game is Live!**", view=StartConnector(session))
+    
+    # Always post dashboard and connector (Game is always live now)
+    dashboard_view = LiveDashboardView(session)
+    embed = discord.Embed(title="📊 Live Leaderboard", description="Refreshing...", color=0xFFD700)
+    session.dashboard_msg = await channel.send(embed=embed, view=dashboard_view)
+    session.connector_msg = await channel.send("🚀 **Game is Live!**", view=StartConnector(session))
 
 # --- VIEWS ---
 
@@ -506,9 +481,9 @@ class IntermissionView(discord.ui.View):
         try: rank = sorted_players.index(self.player) + 1
         except: rank = 0
         self.player.current_q_timestamp = time.time()
-        embed, content = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}", powerplay_active=self.session.global_powerplay_active)
+        embed = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}", powerplay_active=self.session.global_powerplay_active)
         view = GameView(self.session, self.player)
-        msg = await interaction.response.edit_message(content=content or None, embed=embed, view=view)
+        msg = await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 class StartConnector(discord.ui.View):
     def __init__(self, session):
@@ -546,21 +521,38 @@ class AdminDashboard(discord.ui.View):
         super().__init__(timeout=None)
         self.session = session
 
-class AdminLaunchView(discord.ui.View):
+# [NEW] LobbyView for the Admin Lobby Command
+class LobbyView(discord.ui.View):
     def __init__(self, session):
         super().__init__(timeout=None)
         self.session = session
-    @discord.ui.button(label="Start Game", style=discord.ButtonStyle.green)
-    async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.show_ids = False
+
+    def get_embed(self):
+        title = "👥 Admin Player Lobby"
         if not self.session.players:
-            await interaction.response.send_message("No players joined yet.", ephemeral=True)
-            return
-        self.session.is_running = True
-        self.session.start_time = time.time()
-        dash_embed = discord.Embed(title="📊 Live Leaderboard", description="Starting...", color=0xFFD700)
-        self.session.dashboard_msg = await interaction.channel.send(embed=dash_embed, view=LiveDashboardView(self.session))
-        self.session.connector_msg = await interaction.channel.send("🚀 **Game is Live!**", view=StartConnector(self.session))
-        await interaction.response.edit_message(content="✅ **Game Started!**", view=None)
+            desc = "No players yet."
+        else:
+            lines = []
+            for p in self.session.players.values():
+                if self.show_ids:
+                    lines.append(f"{p.name} (`{p.user_id}`)")
+                else:
+                    lines.append(f"**{p.name}**")
+            desc = "\n".join(lines)
+        
+        footer = f"Total Players: {len(self.session.players)}"
+        embed = discord.Embed(title=title, description=desc, color=0x3498DB)
+        embed.set_footer(text=footer)
+        return embed
+
+    @discord.ui.button(label="Toggle IDs", style=discord.ButtonStyle.secondary)
+    async def toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_privileged(interaction):
+             await interaction.response.send_message("⛔", ephemeral=True)
+             return
+        self.show_ids = not self.show_ids
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
 class GameView(discord.ui.View):
     def __init__(self, session: GameSession, player: Player, status_log: str = "", restored: bool = False):
@@ -608,17 +600,6 @@ class GameView(discord.ui.View):
             'reorder': self.reorder_sequence
         }
 
-    async def toggle_vis_callback(self, interaction: discord.Interaction):
-        if not await self.check_ownership(interaction): return
-        self.player.low_visibility = True
-        self.clear_items()
-        self.setup_answer_buttons()
-        self.setup_powerup_buttons()
-        embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), current_sequence=self.reorder_sequence, powerplay_active=self.session.global_powerplay_active)
-        final_msg = f"{self.status_log}\n{content}".strip()
-        await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
-    
-    
     async def handle_restored(self, interaction: discord.Interaction):
         """Standard response for any interaction on a restored/stale board"""
         msg = "⚠️ **Board Expired:** The bot was reloaded. Please generate a fresh board from the main menu!"
@@ -670,7 +651,6 @@ class GameView(discord.ui.View):
             btn.callback = self.answer_callback
             self.add_item(btn)
             
-        # Row 2 Controls
         if self.current_q.allow_multi_select or self.current_q.type == QuestionType.REORDER:
             submit_btn = discord.ui.Button(label="Submit", style=discord.ButtonStyle.success, custom_id=f"submit_{self.player.user_id}", row=2, emoji="✅")
             submit_btn.callback = self.submit_callback
@@ -679,12 +659,6 @@ class GameView(discord.ui.View):
                 reset_btn = discord.ui.Button(label="Reset Order", style=discord.ButtonStyle.danger, custom_id="reset", row=2, emoji="🔄")
                 reset_btn.callback = self.reset_callback
                 self.add_item(reset_btn)
-
-        # [CHANGE] Add Mobile/Low Vis Button if not already active
-        if not getattr(self.player, "low_visibility", False):
-            vis_btn = discord.ui.Button(label="Can't see questions?", style=discord.ButtonStyle.danger, custom_id="toggle_vis", row=2)
-            vis_btn.callback = self.toggle_vis_callback
-            self.add_item(vis_btn)
 
     def setup_powerup_buttons(self):
         if not self.player.inventory: return
@@ -737,18 +711,13 @@ class GameView(discord.ui.View):
                         asyncio.create_task(push_update_to_player(self.session, p, glitch=False))
             asyncio.create_task(revert())
             
-        # --- FIX: SAVE STATUS TO LOG ---
-        # This ensures the text stays if the user clicks other buttons
         self.status_log = f"⚡ **Activated: {selected_powerup.name}!**"
-        # -------------------------------
 
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
-        new_embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
-        # [CHANGE] Handle content
-        final_msg = f"{self.status_log}\n{content}".strip()
-        await interaction.response.edit_message(content=final_msg or None, embed=new_embed, view=self)
+        new_embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+        await interaction.response.edit_message(content=self.status_log, embed=new_embed, view=self)
 
     async def reset_callback(self, interaction):
         if self.restored: return await self.handle_restored(interaction) 
@@ -758,9 +727,8 @@ class GameView(discord.ui.View):
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
-        embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
-        final_msg = f"{self.status_log}\n{content}".strip()
-        await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
+        embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+        await interaction.response.edit_message(content=self.status_log, embed=embed, view=self)
 
     async def answer_callback(self, interaction):
         if self.restored: return await self.handle_restored(interaction) # <--- CHECK
@@ -779,13 +747,13 @@ class GameView(discord.ui.View):
                 self.setup_answer_buttons()
                 self.setup_powerup_buttons()
                 rank_str = self.get_rank_str()
-                
-                # [CHANGE] Build embed and content
-                embed, q_content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, rank_str, current_sequence=self.reorder_sequence, powerplay_active=self.session.global_powerplay_active)
-                
-                # [CHANGE] Combine status log and question content
-                final_content = f"{self.status_log}\n{q_content}".strip()
-                await interaction.response.edit_message(content=final_content or None, embed=embed, view=self)
+                seq_text = "**Current Sequence:**\n"
+                for idx, o_idx in enumerate(self.reorder_sequence):
+                    seq_text += f"{idx+1}. {self.current_q.options[o_idx]}\n"
+                full_content = f"{self.status_log}\n\n{seq_text}"
+                embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, rank_str, powerplay_active=self.session.global_powerplay_active)
+                await interaction.response.edit_message(content=full_content, embed=embed, view=self)
+            
         elif self.current_q.allow_multi_select:
             if clicked_display_idx in self.current_selections: self.current_selections.remove(clicked_display_idx)
             else: self.current_selections.add(clicked_display_idx)
@@ -794,11 +762,8 @@ class GameView(discord.ui.View):
             self.clear_items()
             self.setup_answer_buttons()
             self.setup_powerup_buttons()
-            
-            embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
-            final_msg = f"{self.status_log}\n{content}".strip()
-            
-            await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
+            embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
+            await interaction.response.edit_message(embed=embed, view=self)
         else:
             await self.process_submission(interaction, [clicked_display_idx])
 
@@ -842,32 +807,12 @@ class GameView(discord.ui.View):
                     self.reorder_sequence.clear()
                     self.save_view_state()
                     
-                    # [CHANGE] Unpack tuple from build_game_embed
-                    embed, content = build_game_embed(
-                        self.player, 
-                        self.current_q, 
-                        self.player.current_q_index + 1, 
-                        self.get_rank_str(), 
-                        current_sequence=self.reorder_sequence,
-                        powerplay_active=self.session.global_powerplay_active
-                    )
-                    
-                    # [IMPORTANT] clear_items is required here to reset buttons for the retry
+                    embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
                     self.clear_items()
                     self.setup_answer_buttons()
                     self.setup_powerup_buttons()
-                    
-                    final_msg = f"🛡️ **Immunity used!**\n{content}".strip()
-                    await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
+                    await interaction.response.edit_message(content=f"🛡️ **Immunity used!**", embed=embed, view=self)
                     return
-        
-            # If no immunity, process failure
-            self.player.incorrect_answers += 1
-            self.session.question_stats[self.real_q_index] += 1
-            if any(p.effect == EffectType.DOUBLE_JEOPARDY for p in self.player.active_powerups):
-                self.player.score = 0
-            if not any(p.effect == EffectType.STREAK_SAVER for p in self.player.active_powerups):
-                self.player.streak = 0
         
         points = 0
         new_pup = None
@@ -898,18 +843,27 @@ class GameView(discord.ui.View):
                         rec.notifications.append(f"🎁 **{self.player.name} gifted you {int(p.value)} pts!**")
                         gift_feedback = f"Gifted {int(p.value)}pts to {rec.name}!"
                     else: gift_feedback = "Gift failed (No players)"
+        else:
+            self.player.incorrect_answers += 1
+            self.session.question_stats[self.real_q_index] += 1
+            if any(p.effect == EffectType.DOUBLE_JEOPARDY for p in self.player.active_powerups):
+                self.player.score = 0
+            if not any(p.effect == EffectType.STREAK_SAVER for p in self.player.active_powerups):
+                self.player.streak = 0
         
         # --- CLEANUP LOGIC ---
         self.player.view_state = {} 
         
         if is_correct:
-            # If Correct: Keep protection items (Immunity/Streak Saver)
+            # If Correct: Keep protection items (Immunity/Streak Saver) because they weren't needed.
+            # Consume everything else (Multipliers, Gifts, One-time modifiers like 50-50).
             self.player.active_powerups = [
                 p for p in self.player.active_powerups 
                 if p.effect in [EffectType.STREAK_SAVER, EffectType.IMMUNITY]
             ]
         else:
-            # If Incorrect: Clear everything (Immunity already consumed above if it existed)
+            # If Incorrect: We used our chances. Clear everything.
+            # (Immunity was already removed in the block above if it triggered)
             self.player.active_powerups.clear()
 
         self.player.current_q_index += 1
@@ -1157,65 +1111,51 @@ class Gameplay(commands.Cog):
             view = ResultsConfirmation(final_msg, channel, bg_ids, trophy_ids, session_id)
             await interaction.response.send_message(f"**Preview for {channel.mention}:**\n\n{final_msg}", view=view, ephemeral=True)
 
-    @app_commands.command(name="start_quiz", description="Load a quiz (Admin)")
+    @app_commands.command(name="start_quiz", description="Start a quiz immediately (Admin)")
     @app_commands.autocomplete(quiz_name=quiz_autocomplete)
     async def start_quiz(self, interaction: discord.Interaction, quiz_name: str):
         if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
+        
         quiz = load_quiz(quiz_name)
         if not quiz:
             await interaction.response.send_message("Quiz not found.", ephemeral=True)
             return
+
+        # Create Session & Start Immediately
         session = GameSession(interaction.channel_id, quiz)
-        active_sessions[interaction.channel_id] = session
-        embed = discord.Embed(title=f"Quiz Open: {quiz.name}", description="Type **/join** to participate!", color=0x00FF00)
-        await interaction.response.send_message(embed=embed)
-        session.lobby_msg = await interaction.original_response()
-        await interaction.followup.send(
-            content="**Admin Controls:** Click to start when players are ready.", 
-            view=AdminLaunchView(session), 
-            ephemeral=True
-        )
-
-    @app_commands.command(name="launch", description="Force start the game (Bypasses Lobby Button)")
-    async def launch_game(self, interaction: discord.Interaction):
-        # 1. Permission Check
-        if not is_privileged(interaction):
-            await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
-            return
-            
-        # 2. Session Check
-        session = active_sessions.get(interaction.channel_id)
-        if not session:
-            await interaction.response.send_message("No active session to launch.", ephemeral=True)
-            return
-            
-        if session.is_running:
-            await interaction.response.send_message("Game is already running!", ephemeral=True)
-            return
-
-        if not session.players:
-            await interaction.response.send_message("No players joined yet.", ephemeral=True)
-            return
-
-        # 3. Clean up the old Lobby Message so chat stays clean
-        if session.lobby_msg:
-            try: await session.lobby_msg.delete()
-            except: pass
-            session.lobby_msg = None
-
-        # 4. Initialize Game State
         session.is_running = True
         session.start_time = time.time()
+        
+        active_sessions[interaction.channel_id] = session
+        
+        await interaction.response.send_message(f"✅ **Starting {quiz.name}...**", ephemeral=True)
 
-        # 5. Post Dashboard & Connector (Same as button logic)
+        # Post Dashboard & Connector
         dash_embed = discord.Embed(title="📊 Live Leaderboard", description="Starting...", color=0xFFD700)
         session.dashboard_msg = await interaction.channel.send(embed=dash_embed, view=LiveDashboardView(session))
         session.connector_msg = await interaction.channel.send("🚀 **Game is Live!**", view=StartConnector(session))
 
-        # 6. Confirm Command Execution
-        await interaction.response.send_message("✅ **Game Launched!**", ephemeral=True)
+    @app_commands.command(name="lobby", description="View active player list (Admin)")
+    async def lobby_command(self, interaction: discord.Interaction):
+        if not is_privileged(interaction):
+            await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
+            return
+        
+        session = active_sessions.get(interaction.channel_id)
+        if not session:
+            await interaction.response.send_message("No active session.", ephemeral=True)
+            return
+
+        view = LobbyView(session)
+        embed = view.get_embed()
+        # Send ephemeral message
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        
+        # Store for dynamic updates in dashboard_update
+        session.admin_lobby_msg = await interaction.original_response()
+        session.admin_lobby_view = view
     
     @app_commands.command(name="stop_quiz", description="Failsafe stop current quiz")
     async def stop_quiz(self, interaction: discord.Interaction):
@@ -1227,24 +1167,6 @@ class Gameplay(commands.Cog):
             await interaction.response.send_message("No active session.", ephemeral=True)
             return
         await finish_game_logic(session, interaction)
-
-    @app_commands.command(name="join", description="Join the active quiz")
-    async def join_command(self, interaction: discord.Interaction):
-        session = active_sessions.get(interaction.channel_id)
-        if not session:
-            await interaction.response.send_message("No active quiz.", ephemeral=True)
-            return
-        player = register_new_player(session, interaction.user)
-        if session.is_running: await open_board_logic(interaction, session, player)
-        else: await interaction.response.send_message("✅ Joined! Wait for start.", ephemeral=True)
-        if session.lobby_msg and not session.is_running:
-            try:
-                embed = session.lobby_msg.embeds[0]
-                # Prepend instruction text to description
-                p_list = "\n".join([p.name for p in session.players.values()])
-                embed.description = f"Type **/join** to participate!\n\n**Players:** {len(session.players)}\n{p_list}"
-                await session.lobby_msg.edit(embed=embed)
-            except: pass
 
     @app_commands.command(name="debug", description="Admin Debug Tools")
     @app_commands.choices(action=[
@@ -1514,6 +1436,14 @@ class Gameplay(commands.Cog):
                     desc += f"**{i+1}. {p.name}** - {p.score} pts (Streak: {p.streak} 🔥) [{status}]\n"
                 embed = discord.Embed(title="📊 Live Leaderboard", description=desc, color=0xFFD700)
                 try: await session.dashboard_msg.edit(embed=embed)
+                except: pass
+            
+            # [NEW] Update Admin Lobby Embed if active
+            if hasattr(session, 'admin_lobby_msg') and session.admin_lobby_msg:
+                try:
+                    view = getattr(session, 'admin_lobby_view', None)
+                    if view:
+                        await session.admin_lobby_msg.edit(embed=view.get_embed())
                 except: pass
                 
     @tasks.loop(seconds=10)
