@@ -84,7 +84,7 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
     else:
         # Standard mode (Extended limits: Question in Description)
         embed_title = f"Q{question_num} {type_text}"
-        main_desc = f"**{q_text}**\n\n"
+        main_desc = f"**{q_text}**\n"
 
     embed = discord.Embed(title=embed_title, color=0x00ff00)
     embed.set_author(name=f"Score: {player.score} pts | Rank: {rank_str}", icon_url=player.avatar_url or None)
@@ -223,7 +223,6 @@ async def finish_game_logic(session: GameSession, interaction: discord.Interacti
             desc = "**🏆 Final Podium:**\n"
             medals = ["🥇", "🥈", "🥉"]
             for i, p in enumerate(sorted_players[:3]): desc += f"{medals[i]} **{p.name}** — {p.score} pts\n"
-            desc += "\nCheck `Admin Report` for details."
         else: desc = "No players participated."
         over_embed = discord.Embed(title="🏁 Game Over!", description=desc, color=0xFF0000)
         await interaction.channel.send(embed=over_embed)
