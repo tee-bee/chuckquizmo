@@ -419,3 +419,56 @@ def get_user_last_quiz_stats(user_id):
         "accuracy": accuracy,
         "quiz_name": row['quiz_name']
     }
+def adjust_session_question(session_id, question_index, new_points, count_as_correct=True):
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # 1. Get all players in this session
+    c.execute("SELECT id FROM players WHERE session_id = ?", (session_id,))
+    player_rows = c.fetchall()
+    player_ids = [row['id'] for row in player_rows]
+    
+    if not player_ids:
+        conn.close()
+        return 0
+        
+    # 2. Update Answers Table
+    # Filter by question index AND player IDs belonging to this session
+    if len(player_ids) == 1:
+        player_id_str = f"({player_ids[0]})"
+    else:
+        player_id_str = str(tuple(player_ids))
+        
+    query = f'''
+        UPDATE answers 
+        SET points_earned = ?, is_correct = ?
+        WHERE question_index = ? AND player_db_id IN {player_id_str}
+    '''
+    
+    # Force correctness to 1 (True) or 0 (False)
+    is_correct_val = 1 if count_as_correct else 0
+    
+    c.execute(query, (new_points, is_correct_val, question_index))
+    affected_rows = c.rowcount
+    
+    # 3. Recalculate Player Totals (Consistency Check)
+    for pid in player_ids:
+        # Recalculate Score
+        c.execute("SELECT SUM(points_earned) FROM answers WHERE player_db_id = ?", (pid,))
+        total_score = c.fetchone()[0] or 0
+        
+        # Recalculate Correct Count
+        c.execute("SELECT COUNT(*) FROM answers WHERE player_db_id = ? AND is_correct = 1", (pid,))
+        correct = c.fetchone()[0] or 0
+        
+        # Recalculate Incorrect Count
+        c.execute("SELECT COUNT(*) FROM answers WHERE player_db_id = ? AND is_correct = 0", (pid,))
+        incorrect = c.fetchone()[0] or 0
+        
+        # Update Player Record
+        c.execute("UPDATE players SET score = ?, correct_count = ?, incorrect_count = ? WHERE id = ?", 
+                  (total_score, correct, incorrect, pid))
+                  
+    conn.commit()
+    conn.close()
+    return affected_rows

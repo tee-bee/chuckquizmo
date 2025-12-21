@@ -17,7 +17,7 @@ from utils.db_manager import (
     get_leaderboard_data, get_roundup_data, get_session_lookup,
     get_history_page, check_results_sent, mark_results_sent,
     log_moderation_action, ban_user_db, unban_user_db, check_is_banned, get_moderation_history,
-    get_user_last_quiz_stats 
+    get_user_last_quiz_stats, adjust_session_question 
 )
 
 
@@ -1848,6 +1848,41 @@ class Gameplay(commands.Cog):
             embed.add_field(name=f"{log['action_type']} | {date_str}", value=val, inline=False)
             
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        
+    @app_commands.command(name="fix_score", description="Admin: Overwrite points for a specific question (e.g. if broken)")
+    @app_commands.describe(
+        session_id="The ID of the session to fix",
+        question_num="The Question Number (e.g. 5 for Q5)",
+        points="The points EVERYONE should get for this question"
+    )
+    async def fix_score(self, interaction: discord.Interaction, session_id: int, question_num: int, points: int):
+        if not is_privileged(interaction):
+            await interaction.response.send_message("⛔ Hardcoded Admin Only.", ephemeral=True)
+            return
+            
+        # Convert Q5 (user view) to Index 4 (db view)
+        q_idx = question_num - 1 
+        
+        if q_idx < 0:
+            await interaction.response.send_message("❌ Invalid Question Number.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        
+        # Run Update
+        count = adjust_session_question(session_id, q_idx, points, count_as_correct=True)
+        
+        if count > 0:
+            # Log it
+            log_moderation_action(0, "SYSTEM", interaction.user.id, "FIX_SCORE", f"Set Q{question_num} to {points}pts", f"Session {session_id}")
+            
+            await interaction.followup.send(
+                f"✅ **Success!**\n"
+                f"Updated **{count}** player records for Session `{session_id}` Question **{question_num}**.\n"
+                f"Everyone who encountered this question now has **{points} points** and it is marked **Correct**."
+            )
+        else:
+            await interaction.followup.send(f"⚠️ No records found for Session `{session_id}` Question `{question_num}`.")
 
 async def setup(bot):
     await bot.add_cog(Gameplay(bot))
