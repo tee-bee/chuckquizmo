@@ -12,7 +12,8 @@ from utils.db_manager import (
     save_full_report, get_recent_sessions, get_session_details, 
     get_total_session_count, get_session_ids_by_limit, 
     get_leaderboard_data, get_roundup_data, get_session_lookup,
-    get_history_page, check_results_sent, mark_results_sent
+    get_history_page, check_results_sent, mark_results_sent,
+    log_moderation_action, ban_user_db, unban_user_db, check_is_banned, get_moderation_history
 )
 
 ADMIN_IDS = [368792134645448704, 193855542366568448]
@@ -492,6 +493,9 @@ class StartConnector(discord.ui.View):
         self.session = session
     @discord.ui.button(label="Open Game Board", style=discord.ButtonStyle.green)
     async def open(self, interaction, button):
+        if check_is_banned(interaction.user.id):
+            await interaction.response.send_message("⛔ **You are banned from Trivia.**", ephemeral=True)
+            return
         player = register_new_player(self.session, interaction.user)
         await open_board_logic(interaction, self.session, player)
 
@@ -1118,7 +1122,14 @@ class Gameplay(commands.Cog):
         )
         bg_ids_str = " ".join([str(uid) for uid in bg_ids])
         tr_ids_str = " ".join([str(uid) for uid in trophy_ids])
-        id_msg = f"**IDs for Role Assignment:**\n\n**Background Winners (>=25% Acc):**\n```\n{bg_ids_str}\n```\n**Trophy Winners (Top 3 Score):**\n```\n{tr_ids_str}\n```"
+        all_ids_str = " ".join([str(p.user_id) for p in players])
+        
+        id_msg = (
+            f"**IDs for Role Assignment:**\n\n"
+            f"**All Participants:**\n```\n{all_ids_str}\n```\n"
+            f"**Background Winners (>=25% Acc):**\n```\n{bg_ids_str}\n```\n"
+            f"**Trophy Winners (Top 3 Score):**\n```\n{tr_ids_str}\n```"
+        )
         if check_results_sent(session_id):
             await interaction.response.send_message(id_msg, view=ResultsResendView(final_msg, channel), ephemeral=True)
         else:
@@ -1469,6 +1480,143 @@ class Gameplay(commands.Cog):
                     if channel:
                         await do_bump(session, channel)
                         session.last_bump_time = time.time()
-                        
+# --- MODERATION COMMANDS ---
+
+    class ModConfirmationView(discord.ui.View):
+        def __init__(self, action_coro):
+            super().__init__(timeout=60)
+            self.action_coro = action_coro
+
+        @discord.ui.button(label="Confirm", style=discord.ButtonStyle.danger)
+        async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await interaction.response.defer()
+            await self.action_coro(interaction)
+            self.stop()
+
+        @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+        async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await interaction.response.edit_message(content="❌ Cancelled.", view=None, embed=None)
+            self.stop()
+
+    @app_commands.command(name="remove_player", description="Force remove a player from the current quiz (Admin)")
+    async def remove_player(self, interaction: discord.Interaction, user: discord.User, reason: str):
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("⛔ Hardcoded Admin Only.", ephemeral=True)
+            return
+
+        session = active_sessions.get(interaction.channel_id)
+        if not session or user.id not in session.players:
+            await interaction.response.send_message("User is not in an active session in this channel.", ephemeral=True)
+            return
+
+        player = session.players[user.id]
+        
+        embed = discord.Embed(title="⚠️ Confirm Removal", description=f"Remove **{player.name}**?\nReason: `{reason}`", color=0xFF0000)
+        
+        async def action(intr):
+            if user.id in session.players:
+                # Log Data
+                log_moderation_action(user.id, player.name, interaction.user.id, "REMOVE", reason, session.quiz.name)
+                
+                # Remove from session
+                del session.players[user.id]
+                
+                # DM User
+                try:
+                    dm_embed = discord.Embed(title="🛑 You have been removed from the quiz", color=0xFF0000)
+                    dm_embed.add_field(name="Reason", value=reason)
+                    dm_embed.add_field(name="Quiz", value=session.quiz.name)
+                    await user.send(embed=dm_embed)
+                except: pass
+                
+                await intr.edit_original_response(content=f"✅ Removed **{player.name}**.", view=None, embed=None)
+            else:
+                await intr.edit_original_response(content="User already left.", view=None, embed=None)
+
+        await interaction.response.send_message(embed=embed, view=self.ModConfirmationView(action), ephemeral=True)
+
+    @app_commands.command(name="ban_player", description="Ban a user from Trivia entirely (Admin)")
+    async def ban_player(self, interaction: discord.Interaction, user: discord.User, reason: str):
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("⛔ Hardcoded Admin Only.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="🔨 Confirm Ban", description=f"Ban **{user.display_name}** from Trivia?\nReason: `{reason}`", color=0x8B0000)
+
+        async def action(intr):
+            # 1. DB Ban
+            ban_user_db(user.id, interaction.user.id, reason)
+            
+            # 2. Log Action
+            log_moderation_action(user.id, user.display_name, interaction.user.id, "BAN", reason, "GLOBAL")
+            
+            # 3. Remove from ANY active session
+            removed_count = 0
+            for session in active_sessions.values():
+                if user.id in session.players:
+                    del session.players[user.id]
+                    removed_count += 1
+            
+            # 4. DM User
+            try:
+                dm_embed = discord.Embed(title="🛑 You have been BANNED from Trivia", color=0x8B0000)
+                dm_embed.add_field(name="Reason", value=reason)
+                await user.send(embed=dm_embed)
+            except: pass
+
+            msg = f"✅ **{user.display_name}** has been banned."
+            if removed_count > 0: msg += f" (Removed from {removed_count} active sessions)"
+            await intr.edit_original_response(content=msg, view=None, embed=None)
+
+        await interaction.response.send_message(embed=embed, view=self.ModConfirmationView(action), ephemeral=True)
+
+
+    @app_commands.command(name="unban_player", description="Unban a user ID from Trivia (Admin)")
+    async def unban_player(self, interaction: discord.Interaction, user_id: str, reason: str):
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("⛔ Hardcoded Admin Only.", ephemeral=True)
+            return
+        
+        try:
+            uid = int(user_id)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid User ID. Please enter a number.", ephemeral=True)
+            return
+
+        if not check_is_banned(uid):
+             await interaction.response.send_message("⚠️ That user is not currently banned.", ephemeral=True)
+             return
+
+        # Perform Unban
+        unban_user_db(uid)
+        
+        # Log it
+        log_moderation_action(uid, f"ID:{uid}", interaction.user.id, "UNBAN", reason, "GLOBAL")
+        
+        await interaction.response.send_message(f"✅ **Unbanned User ID:** `{uid}`", ephemeral=True)
+        
+        
+    @app_commands.command(name="mod_history", description="View moderation logs (Admin)")
+    async def mod_history(self, interaction: discord.Interaction):
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("⛔ Hardcoded Admin Only.", ephemeral=True)
+            return
+        
+        logs = get_moderation_history(limit=15)
+        if not logs:
+            await interaction.response.send_message("No logs found.", ephemeral=True)
+            return
+            
+        embed = discord.Embed(title="🛡️ Moderation History", color=0x3498DB)
+        for log in logs:
+            date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(log['timestamp']))
+            val = (f"**User:** {log['user_name']} (`{log['user_id']}`)\n"
+                   f"**Admin:** <@{log['admin_id']}>\n"
+                   f"**Reason:** {log['reason']}\n"
+                   f"**Context:** {log['quiz_name']}")
+            embed.add_field(name=f"{log['action_type']} | {date_str}", value=val, inline=False)
+            
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 async def setup(bot):
     await bot.add_cog(Gameplay(bot))

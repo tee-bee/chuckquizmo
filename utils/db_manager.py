@@ -66,6 +66,25 @@ def setup_database():
         FOREIGN KEY(session_id) REFERENCES sessions(session_id)
     )''')
     
+    # [NEW] Moderation Tables
+    c.execute('''CREATE TABLE IF NOT EXISTS moderation_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        user_name TEXT,
+        admin_id INTEGER,
+        action_type TEXT,
+        reason TEXT,
+        quiz_name TEXT,
+        timestamp REAL
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS banned_users (
+        user_id INTEGER PRIMARY KEY,
+        admin_id INTEGER,
+        reason TEXT,
+        timestamp REAL
+    )''')
+    
     # Migrations for existing DBs
     try: c.execute("ALTER TABLE answers ADD COLUMN chosen_text TEXT")
     except: pass
@@ -329,3 +348,44 @@ def delete_sessions_range(start_id, end_id):
     conn.commit()
     conn.close()
     return deleted_count
+
+# --- MODERATION FUNCTIONS ---
+
+def log_moderation_action(user_id, user_name, admin_id, action_type, reason, quiz_name):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("INSERT INTO moderation_logs (user_id, user_name, admin_id, action_type, reason, quiz_name, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              (user_id, user_name, admin_id, action_type, reason, quiz_name, time.time()))
+    conn.commit()
+    conn.close()
+
+def ban_user_db(user_id, admin_id, reason):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO banned_users (user_id, admin_id, reason, timestamp) VALUES (?, ?, ?, ?)",
+              (user_id, admin_id, reason, time.time()))
+    conn.commit()
+    conn.close()
+
+def unban_user_db(user_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM banned_users WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+def check_is_banned(user_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,))
+    res = c.fetchone()
+    conn.close()
+    return bool(res)
+
+def get_moderation_history(limit=25):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM moderation_logs ORDER BY timestamp DESC LIMIT ?", (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
