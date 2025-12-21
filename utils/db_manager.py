@@ -394,12 +394,12 @@ def get_moderation_history(limit=25):
 def get_user_last_quiz_stats(user_id):
     conn = get_connection()
     c = conn.cursor()
-    # [CHANGE] Fetch total_questions from session to calculate true grade
+    # [CHANGE] Add 'AND p.unattempted_count = 0' to ensure we only get completed quizzes
     query = '''
         SELECT p.score, p.rank, p.correct_count, s.quiz_name, s.total_questions
         FROM players p
         JOIN sessions s ON p.session_id = s.session_id
-        WHERE p.user_id = ?
+        WHERE p.user_id = ? AND p.unattempted_count = 0
         ORDER BY s.date_played DESC
         LIMIT 1
     '''
@@ -409,7 +409,6 @@ def get_user_last_quiz_stats(user_id):
     
     if not row: return None
     
-    # [CHANGE] Accuracy = Correct / Total Quiz Questions (Handles unattempted Qs correctly)
     total_q = row['total_questions']
     correct = row['correct_count']
     accuracy = (correct / total_q * 100) if total_q > 0 else 0.0

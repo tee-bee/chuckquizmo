@@ -1227,12 +1227,40 @@ class Gameplay(commands.Cog):
                 choices.append(app_commands.Choice(name=p.name, value=p.name))
         return choices[:25]
 
-    @app_commands.command(name="share", description="Share your result from the last quiz")
+    @app_commands.command(name="share", description="Share your result from the last completed quiz")
     async def share_cmd(self, interaction: discord.Interaction):
-        # Fetch stats
-        stats = get_user_last_quiz_stats(interaction.user.id)
+        # 1. Check Active Sessions (Memory) - Prioritize live games the user just finished
+        stats = None
+        latest_active_time = 0
+        
+        for session in active_sessions.values():
+            if interaction.user.id in session.players:
+                p = session.players[interaction.user.id]
+                # Only count if they actually finished the quiz
+                if p.completed and p.completion_timestamp > latest_active_time:
+                    # Calculate Live Rank
+                    sorted_players = sorted(session.players.values(), key=lambda x: x.score, reverse=True)
+                    try: rank = sorted_players.index(p) + 1
+                    except: rank = 0
+                    
+                    # Calculate Stats
+                    total_q = len(session.quiz.questions)
+                    acc = (p.correct_answers / total_q * 100) if total_q > 0 else 0.0
+                    
+                    stats = {
+                        "score": p.score,
+                        "rank": rank,
+                        "accuracy": acc,
+                        "quiz_name": session.quiz.name
+                    }
+                    latest_active_time = p.completion_timestamp
+        
+        # 2. If no active game found, check Database History
         if not stats:
-            await interaction.response.send_message("No recent quiz history found.", ephemeral=True)
+            stats = get_user_last_quiz_stats(interaction.user.id)
+            
+        if not stats:
+            await interaction.response.send_message("No completed quiz history found.", ephemeral=True)
             return
         
         # Defer while generating image
