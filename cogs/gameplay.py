@@ -192,7 +192,7 @@ def glitch_text(text: str) -> str:
             chars[i] = random.choice(["#", "$", "%", "&", "@", "?", "!", "0", "1"])
     return "".join(chars)
 
-def build_game_embed(player: Player, question: Question, question_num: int, rank_str: str, current_sequence=None, glitch_active=False, powerplay_active=False) -> tuple[discord.Embed, str]:
+def build_game_embed(player: Player, question: Question, question_num: int, rank_str: str, current_sequence=None, glitch_active=False, powerplay_active=False) -> tuple[discord.Embed, str, discord.File]:
     q_text = question.text
     type_text = ""
     if question.type == QuestionType.REORDER: type_text = "(Order Sequence)"
@@ -202,16 +202,27 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
         q_text = glitch_text(q_text)
         type_text = glitch_text(type_text)
     
-    # [CHANGE] Always put question text in message content (High Visibility)
     content_str = f"**Q{question_num}: {q_text}** {type_text}"
 
     embed = discord.Embed(title=f"Q{question_num} {type_text}", color=0x00ff00)
     embed.set_author(name=f"Score: {player.score} pts | Rank: {rank_str}", icon_url=player.avatar_url or None)
     
+    # [FIX] Handle Images (URL vs Local File)
+    file_attachment = None
+    if question.image_url:
+        # 1. Web URL
+        if question.image_url.lower().startswith(("http://", "https://")):
+            embed.set_image(url=question.image_url)
+        # 2. Local File
+        elif os.path.exists(question.image_url):
+            filename = os.path.basename(question.image_url)
+            # Create the file object (this effectively 'buffers' it for upload)
+            file_attachment = discord.File(question.image_url, filename=filename)
+            embed.set_image(url=f"attachment://{filename}")
+
     desc = ""
     if glitch_active: desc += "# 👾 YOU’VE BEEN GLITCHED! 👾\n\n"
     
-    # Embed Description now focuses on Status Effects & Timer
     if player.active_powerups:
         pup_names = [f"**{p.name}**" for p in player.active_powerups]
         desc += f"⚡ **Active Effects:** {' | '.join(pup_names)}\n"
@@ -235,11 +246,9 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
         seq_items = [question.options[i][:15] for i in current_sequence]
         if glitch_active: seq_items = [glitch_text(s) for s in seq_items]
         seq_str = " -> ".join(seq_items)
-        # Put sequence in content so it's visible too
         content_str += f"\n**Current Sequence:** `{seq_str}`"
 
     embed.description = desc
-    if question.image_url: embed.set_image(url=question.image_url)
 
     if player.inventory:
         unique_items = {item.name: item for item in player.inventory}
@@ -253,7 +262,7 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
             desc_text += f"-# **{item.icon} {name}:** {desc_i}\n"
         embed.add_field(name="🎒 Your Power-ups", value=desc_text, inline=False)
         
-    return embed, content_str
+    return embed, content_str, file_attachment
 
 async def push_update_to_player(session: GameSession, player: Player, glitch=False):
     if not player.board_message: return
@@ -266,16 +275,16 @@ async def push_update_to_player(session: GameSession, player: Player, glitch=Fal
 
         cur_seq = player.view_state.get('reorder')
 
-        embed, content = build_game_embed(
-            player, 
-            q, 
-            player.current_q_index + 1, 
-            f"#{rank}", 
-            current_sequence=cur_seq,
-            glitch_active=glitch,
+        # [CHANGE] Unpack 3 values
+        embed, content, file = build_game_embed(
+            player, q, player.current_q_index + 1, f"#{rank}", 
+            current_sequence=cur_seq, glitch_active=glitch,
             powerplay_active=session.global_powerplay_active 
         )
-        await player.board_message.edit(content=content or None, embed=embed)
+        
+        # [CHANGE] Pass attachments (clears old ones, sets new one if exists)
+        atts = [file] if file else []
+        await player.board_message.edit(content=content or None, embed=embed, attachments=atts)
     except: pass
 
 async def open_board_logic(interaction: discord.Interaction, session: GameSession, player: Player):
@@ -289,14 +298,16 @@ async def open_board_logic(interaction: discord.Interaction, session: GameSessio
     except: rank = 0
     rank_str = f"#{rank}"
     
-    embed, content = build_game_embed(player, q1, player.current_q_index + 1, rank_str, powerplay_active=session.global_powerplay_active)
+    # [CHANGE] Unpack 3 values
+    embed, content, file = build_game_embed(player, q1, player.current_q_index + 1, rank_str, powerplay_active=session.global_powerplay_active)
     
     view = GameView(session, player)
     
+    # [CHANGE] Pass file to send/followup
     if interaction.response.is_done():
-        msg = await interaction.followup.send(content=content or None, embed=embed, view=view, ephemeral=True)
+        msg = await interaction.followup.send(content=content or None, embed=embed, view=view, file=file, ephemeral=True)
     else:
-        await interaction.response.send_message(content=content or None, embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(content=content or None, embed=embed, view=view, file=file, ephemeral=True)
         msg = await interaction.original_response()
     player.board_message = msg
 
@@ -626,9 +637,13 @@ class IntermissionView(discord.ui.View):
         try: rank = sorted_players.index(self.player) + 1
         except: rank = 0
         self.player.current_q_timestamp = time.time()
-        embed, content = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}", powerplay_active=self.session.global_powerplay_active)
+        
+        # [CHANGE] Unpack and use attachments
+        embed, content, file = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}", powerplay_active=self.session.global_powerplay_active)
         view = GameView(self.session, self.player)
-        msg = await interaction.response.edit_message(content=content or None, embed=embed, view=view)
+        
+        atts = [file] if file else []
+        msg = await interaction.response.edit_message(content=content or None, embed=embed, view=view, attachments=atts)
 
 class StartConnector(discord.ui.View):
     def __init__(self, session):
@@ -891,10 +906,14 @@ class GameView(discord.ui.View):
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
-        new_embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
-        # [CHANGE] Handle content
+        # [CHANGE] Unpack
+        new_embed, content, file = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+        
         final_msg = f"{self.status_log}\n{content}".strip()
-        await interaction.response.edit_message(content=final_msg or None, embed=new_embed, view=self)
+        
+        # [CHANGE] Edit with attachments
+        atts = [file] if file else []
+        await interaction.response.edit_message(content=final_msg or None, embed=new_embed, view=self, attachments=atts)
 
     async def reset_callback(self, interaction):
         if self.restored: return await self.handle_restored(interaction) 
@@ -904,9 +923,14 @@ class GameView(discord.ui.View):
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
-        embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+        # [CHANGE] Unpack
+        new_embed, content, file = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+        
         final_msg = f"{self.status_log}\n{content}".strip()
-        await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
+        
+        # [CHANGE] Edit with attachments
+        atts = [file] if file else []
+        await interaction.response.edit_message(content=final_msg or None, embed=new_embed, view=self, attachments=atts)
 
     async def answer_callback(self, interaction):
         if self.restored: return await self.handle_restored(interaction) # <--- CHECK
@@ -941,10 +965,14 @@ class GameView(discord.ui.View):
             self.setup_answer_buttons()
             self.setup_powerup_buttons()
             
-            embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+            # [CHANGE] Unpack
+            new_embed, content, file = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+        
             final_msg = f"{self.status_log}\n{content}".strip()
-            
-            await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
+        
+        # [CHANGE] Edit with attachments
+            atts = [file] if file else []
+            await interaction.response.edit_message(content=final_msg or None, embed=new_embed, view=self, attachments=atts)
         else:
             await self.process_submission(interaction, [clicked_display_idx])
 
@@ -988,7 +1016,8 @@ class GameView(discord.ui.View):
                     self.reorder_sequence.clear()
                     self.save_view_state()
                     
-                    embed, content = build_game_embed(
+                    # [CHANGE] Unpack 3 values (embed, content, file)
+                    embed, content, file = build_game_embed(
                         self.player, 
                         self.current_q, 
                         self.player.current_q_index + 1, 
@@ -1002,10 +1031,13 @@ class GameView(discord.ui.View):
                     self.setup_powerup_buttons()
                     
                     final_msg = f"🛡️ **Immunity used!**\n{content}".strip()
-                    await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
+                    
+                    # [CHANGE] Pass attachments
+                    atts = [file] if file else []
+                    await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self, attachments=atts)
                     return
             
-            # [RESTORED] These lines were missing!
+            # [CRITICAL RESTORE] Stats counting for incorrect answers
             self.player.incorrect_answers += 1
             self.session.question_stats[self.real_q_index] += 1
             if any(p.effect == EffectType.DOUBLE_JEOPARDY for p in self.player.active_powerups):
@@ -1047,13 +1079,13 @@ class GameView(discord.ui.View):
         self.player.view_state = {} 
         
         if is_correct:
-            # If Correct: Keep protection items (Immunity/Streak Saver)
+            # Keep protection items
             self.player.active_powerups = [
                 p for p in self.player.active_powerups 
                 if p.effect in [EffectType.STREAK_SAVER, EffectType.IMMUNITY]
             ]
         else:
-            # If Incorrect: Clear everything (Immunity already consumed above if it existed)
+            # Clear everything (Immunity already consumed above if it existed)
             self.player.active_powerups.clear()
 
         self.player.current_q_index += 1
