@@ -534,9 +534,11 @@ class LiveDashboardView(discord.ui.View):
         total = len(sorted_players)
         await interaction.response.send_message(f"🏅 **Your Rank:** #{rank} / {total}\n**Score:** {player.score} pts\n**Streak:** {player.streak} 🔥", ephemeral=True)
     @discord.ui.button(label="End Game (Admin)", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="End Game (Admin)", style=discord.ButtonStyle.danger, row=1)
     async def end_game(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_privileged(interaction):
-            await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
+        # [CHANGE] Strict Check: Only hardcoded ADMIN_IDS can end the game
+        if interaction.user.id not in ADMIN_IDS:
+            await interaction.response.send_message("⛔ Bot Admin Only.", ephemeral=True)
             return
         await finish_game_logic(self.session, interaction)
 
