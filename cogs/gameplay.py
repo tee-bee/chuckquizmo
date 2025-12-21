@@ -51,6 +51,7 @@ def register_new_player(session: GameSession, user: discord.User) -> Player:
     random.shuffle(order)
     new_player.question_order = order
     new_player.join_time = time.time()
+    new_player.low_visibility = False
     session.players[user.id] = new_player
     return new_player
 
@@ -61,7 +62,7 @@ def glitch_text(text: str) -> str:
             chars[i] = random.choice(["#", "$", "%", "&", "@", "?", "!", "0", "1"])
     return "".join(chars)
 
-def build_game_embed(player: Player, question: Question, question_num: int, rank_str: str, current_sequence=None, glitch_active=False, powerplay_active=False) -> discord.Embed:
+def build_game_embed(player: Player, question: Question, question_num: int, rank_str: str, current_sequence=None, glitch_active=False, powerplay_active=False) -> tuple[discord.Embed, str]:
     q_text = question.text
     type_text = ""
     if question.type == QuestionType.REORDER: type_text = "(Order Sequence)"
@@ -71,17 +72,33 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
         q_text = glitch_text(q_text)
         type_text = glitch_text(type_text)
     
-    embed = discord.Embed(title=f"Q{question_num}: {q_text} {type_text}", color=0x00ff00)
+    # [CHANGE] Determine visibility mode
+    low_vis = getattr(player, 'low_visibility', False)
+    content_str = ""
+
+    if low_vis:
+        # Plain text mode
+        embed_title = f"Q{question_num} {type_text} (See Text Above)"
+        content_str = f"**Q{question_num}: {q_text}** {type_text}"
+        main_desc = "" # Question is in content
+    else:
+        # Standard mode (Extended limits: Question in Description)
+        embed_title = f"Q{question_num} {type_text}"
+        main_desc = f"**{q_text}**\n\n"
+
+    embed = discord.Embed(title=embed_title, color=0x00ff00)
     embed.set_author(name=f"Score: {player.score} pts | Rank: {rank_str}", icon_url=player.avatar_url or None)
     
     desc = ""
+    if glitch_active: desc += "# 👾 YOU’VE BEEN GLITCHED! 👾\n\n"
     
-    # [CHANGE] Persistent Power-up List
+    # Add Question Text to Embed Description if standard mode
+    desc += main_desc
+    
     if player.active_powerups:
         pup_names = [f"**{p.name}**" for p in player.active_powerups]
         desc += f"⚡ **Active Effects:** {' | '.join(pup_names)}\n"
 
-    # [CHANGE] Power Play Indicator
     if powerplay_active:
         desc += "🔥 **POWER PLAY ACTIVE: 1.5x POINTS!** 🔥\n"
         
@@ -100,8 +117,14 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
     if question.type == QuestionType.REORDER and current_sequence:
         seq_items = [question.options[i][:15] for i in current_sequence]
         if glitch_active: seq_items = [glitch_text(s) for s in seq_items]
-        seq_str = " -> ".join(seq_items)
-        desc += f"\n**Current Sequence:**\n`{seq_str}`"
+        
+        # [CHANGE] Handle sequence display based on mode
+        if low_vis:
+             seq_str = " -> ".join(seq_items)
+             content_str += f"\n**Current Sequence:** `{seq_str}`"
+        else:
+             seq_str = " -> ".join(seq_items)
+             desc += f"\n**Current Sequence:**\n`{seq_str}`"
 
     embed.description = desc
     if question.image_url: embed.set_image(url=question.image_url)
@@ -117,7 +140,8 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
                 desc_i = glitch_text(desc_i)
             desc_text += f"-# **{item.icon} {name}:** {desc_i}\n"
         embed.add_field(name="🎒 Your Power-ups", value=desc_text, inline=False)
-    return embed
+        
+    return embed, content_str
 
 async def push_update_to_player(session: GameSession, player: Player, glitch=False):
     if not player.board_message: return
@@ -131,16 +155,16 @@ async def push_update_to_player(session: GameSession, player: Player, glitch=Fal
         # Retrieve reorder sequence from state if available so it doesn't disappear from UI
         cur_seq = player.view_state.get('reorder')
 
-        embed = build_game_embed(
+        embed, content = build_game_embed(
             player, 
             q, 
             player.current_q_index + 1, 
             f"#{rank}", 
             current_sequence=cur_seq,
             glitch_active=glitch,
-            powerplay_active=session.global_powerplay_active # FIXED: Pass global state
+            powerplay_active=session.global_powerplay_active 
         )
-        await player.board_message.edit(embed=embed)
+        await player.board_message.edit(content=content or None, embed=embed)
     except: pass
 
 async def open_board_logic(interaction: discord.Interaction, session: GameSession, player: Player):
@@ -154,14 +178,14 @@ async def open_board_logic(interaction: discord.Interaction, session: GameSessio
     except: rank = 0
     rank_str = f"#{rank}"
     
-    # Pass powerplay state here too
-    embed = build_game_embed(player, q1, player.current_q_index + 1, rank_str, powerplay_active=session.global_powerplay_active)
+    embed, content = build_game_embed(player, q1, player.current_q_index + 1, rank_str, powerplay_active=session.global_powerplay_active)
     
     view = GameView(session, player)
+    # [CHANGE] Send content if generated
     if interaction.response.is_done():
-        msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        msg = await interaction.followup.send(content=content or None, embed=embed, view=view, ephemeral=True)
     else:
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(content=content or None, embed=embed, view=view, ephemeral=True)
         msg = await interaction.original_response()
     player.board_message = msg
 
@@ -216,7 +240,8 @@ async def do_bump(session: GameSession, channel):
             except: pass
             setattr(session, attr, None) 
     if not session.is_running:
-        embed = discord.Embed(title=f"Quiz Lobby: {session.quiz.name}", description=f"**Players:** {len(session.players)}\n" + "\n".join([p.name for p in session.players.values()]))
+        p_list = "\n".join([p.name for p in session.players.values()])
+        embed = discord.Embed(title=f"Quiz Lobby: {session.quiz.name}", description=f"Type **/join** to participate!\n\n**Players:** {len(session.players)}\n{p_list}")
         embed.set_footer(text="Type /join to enter!")
         session.lobby_msg = await channel.send(embed=embed)
     else:
@@ -482,9 +507,9 @@ class IntermissionView(discord.ui.View):
         try: rank = sorted_players.index(self.player) + 1
         except: rank = 0
         self.player.current_q_timestamp = time.time()
-        embed = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}", powerplay_active=self.session.global_powerplay_active)
+        embed, content = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}", powerplay_active=self.session.global_powerplay_active)
         view = GameView(self.session, self.player)
-        msg = await interaction.response.edit_message(content=None, embed=embed, view=view)
+        msg = await interaction.response.edit_message(content=content or None, embed=embed, view=view)
 
 class StartConnector(discord.ui.View):
     def __init__(self, session):
@@ -583,6 +608,17 @@ class GameView(discord.ui.View):
             'reorder': self.reorder_sequence
         }
 
+    async def toggle_vis_callback(self, interaction: discord.Interaction):
+        if not await self.check_ownership(interaction): return
+        self.player.low_visibility = True
+        self.clear_items()
+        self.setup_answer_buttons()
+        self.setup_powerup_buttons()
+        embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), current_sequence=self.reorder_sequence, powerplay_active=self.session.global_powerplay_active)
+        final_msg = f"{self.status_log}\n{content}".strip()
+        await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
+    
+    
     async def handle_restored(self, interaction: discord.Interaction):
         """Standard response for any interaction on a restored/stale board"""
         msg = "⚠️ **Board Expired:** The bot was reloaded. Please generate a fresh board from the main menu!"
@@ -634,6 +670,7 @@ class GameView(discord.ui.View):
             btn.callback = self.answer_callback
             self.add_item(btn)
             
+        # Row 2 Controls
         if self.current_q.allow_multi_select or self.current_q.type == QuestionType.REORDER:
             submit_btn = discord.ui.Button(label="Submit", style=discord.ButtonStyle.success, custom_id=f"submit_{self.player.user_id}", row=2, emoji="✅")
             submit_btn.callback = self.submit_callback
@@ -642,6 +679,12 @@ class GameView(discord.ui.View):
                 reset_btn = discord.ui.Button(label="Reset Order", style=discord.ButtonStyle.danger, custom_id="reset", row=2, emoji="🔄")
                 reset_btn.callback = self.reset_callback
                 self.add_item(reset_btn)
+
+        # [CHANGE] Add Mobile/Low Vis Button if not already active
+        if not getattr(self.player, "low_visibility", False):
+            vis_btn = discord.ui.Button(label="Can't see questions?", style=discord.ButtonStyle.danger, custom_id="toggle_vis", row=2)
+            vis_btn.callback = self.toggle_vis_callback
+            self.add_item(vis_btn)
 
     def setup_powerup_buttons(self):
         if not self.player.inventory: return
@@ -702,19 +745,22 @@ class GameView(discord.ui.View):
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
-        new_embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
-        await interaction.response.edit_message(content=self.status_log, embed=new_embed, view=self)
+        new_embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+        # [CHANGE] Handle content
+        final_msg = f"{self.status_log}\n{content}".strip()
+        await interaction.response.edit_message(content=final_msg or None, embed=new_embed, view=self)
 
     async def reset_callback(self, interaction):
-        if self.restored: return await self.handle_restored(interaction) # <--- CHECK
+        if self.restored: return await self.handle_restored(interaction) 
         if not await self.check_ownership(interaction): return
         self.reorder_sequence.clear()
         self.save_view_state() 
         self.clear_items()
         self.setup_answer_buttons()
         self.setup_powerup_buttons()
-        embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
-        await interaction.response.edit_message(content=self.status_log, embed=embed, view=self)
+        embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+        final_msg = f"{self.status_log}\n{content}".strip()
+        await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
 
     async def answer_callback(self, interaction):
         if self.restored: return await self.handle_restored(interaction) # <--- CHECK
@@ -733,13 +779,13 @@ class GameView(discord.ui.View):
                 self.setup_answer_buttons()
                 self.setup_powerup_buttons()
                 rank_str = self.get_rank_str()
-                seq_text = "**Current Sequence:**\n"
-                for idx, o_idx in enumerate(self.reorder_sequence):
-                    seq_text += f"{idx+1}. {self.current_q.options[o_idx]}\n"
-                full_content = f"{self.status_log}\n\n{seq_text}"
-                embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, rank_str, powerplay_active=self.session.global_powerplay_active)
-                await interaction.response.edit_message(content=full_content, embed=embed, view=self)
-            
+                
+                # [CHANGE] Build embed and content
+                embed, q_content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, rank_str, current_sequence=self.reorder_sequence, powerplay_active=self.session.global_powerplay_active)
+                
+                # [CHANGE] Combine status log and question content
+                final_content = f"{self.status_log}\n{q_content}".strip()
+                await interaction.response.edit_message(content=final_content or None, embed=embed, view=self)
         elif self.current_q.allow_multi_select:
             if clicked_display_idx in self.current_selections: self.current_selections.remove(clicked_display_idx)
             else: self.current_selections.add(clicked_display_idx)
@@ -748,8 +794,11 @@ class GameView(discord.ui.View):
             self.clear_items()
             self.setup_answer_buttons()
             self.setup_powerup_buttons()
-            embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str())
-            await interaction.response.edit_message(embed=embed, view=self)
+            
+            embed, content = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+            final_msg = f"{self.status_log}\n{content}".strip()
+            
+            await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
         else:
             await self.process_submission(interaction, [clicked_display_idx])
 
@@ -792,12 +841,33 @@ class GameView(discord.ui.View):
                     self.current_selections.clear()
                     self.reorder_sequence.clear()
                     self.save_view_state()
-                    embed = build_game_embed(self.player, self.current_q, self.player.current_q_index + 1, self.get_rank_str(), powerplay_active=self.session.global_powerplay_active)
+                    
+                    # [CHANGE] Unpack tuple from build_game_embed
+                    embed, content = build_game_embed(
+                        self.player, 
+                        self.current_q, 
+                        self.player.current_q_index + 1, 
+                        self.get_rank_str(), 
+                        current_sequence=self.reorder_sequence,
+                        powerplay_active=self.session.global_powerplay_active
+                    )
+                    
+                    # [IMPORTANT] clear_items is required here to reset buttons for the retry
                     self.clear_items()
                     self.setup_answer_buttons()
                     self.setup_powerup_buttons()
-                    await interaction.response.edit_message(content=f"🛡️ **Immunity used!**", embed=embed, view=self)
+                    
+                    final_msg = f"🛡️ **Immunity used!**\n{content}".strip()
+                    await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
                     return
+        
+            # If no immunity, process failure
+            self.player.incorrect_answers += 1
+            self.session.question_stats[self.real_q_index] += 1
+            if any(p.effect == EffectType.DOUBLE_JEOPARDY for p in self.player.active_powerups):
+                self.player.score = 0
+            if not any(p.effect == EffectType.STREAK_SAVER for p in self.player.active_powerups):
+                self.player.streak = 0
         
         points = 0
         new_pup = None
@@ -828,27 +898,18 @@ class GameView(discord.ui.View):
                         rec.notifications.append(f"🎁 **{self.player.name} gifted you {int(p.value)} pts!**")
                         gift_feedback = f"Gifted {int(p.value)}pts to {rec.name}!"
                     else: gift_feedback = "Gift failed (No players)"
-        else:
-            self.player.incorrect_answers += 1
-            self.session.question_stats[self.real_q_index] += 1
-            if any(p.effect == EffectType.DOUBLE_JEOPARDY for p in self.player.active_powerups):
-                self.player.score = 0
-            if not any(p.effect == EffectType.STREAK_SAVER for p in self.player.active_powerups):
-                self.player.streak = 0
         
-        # --- MODIFIED CLEANUP LOGIC ---
+        # --- CLEANUP LOGIC ---
         self.player.view_state = {} 
         
         if is_correct:
-            # If Correct: Keep protection items (Immunity/Streak Saver) because they weren't needed.
-            # Consume everything else (Multipliers, Gifts, One-time modifiers like 50-50).
+            # If Correct: Keep protection items (Immunity/Streak Saver)
             self.player.active_powerups = [
                 p for p in self.player.active_powerups 
                 if p.effect in [EffectType.STREAK_SAVER, EffectType.IMMUNITY]
             ]
         else:
-            # If Incorrect: We used our chances. Clear everything.
-            # (Immunity was already removed in the block above if it triggered)
+            # If Incorrect: Clear everything (Immunity already consumed above if it existed)
             self.player.active_powerups.clear()
 
         self.player.current_q_index += 1
@@ -1179,13 +1240,16 @@ class Gameplay(commands.Cog):
         if session.lobby_msg and not session.is_running:
             try:
                 embed = session.lobby_msg.embeds[0]
-                embed.description = f"**Players:** {len(session.players)}\n" + "\n".join([p.name for p in session.players.values()])
+                # Prepend instruction text to description
+                p_list = "\n".join([p.name for p in session.players.values()])
+                embed.description = f"Type **/join** to participate!\n\n**Players:** {len(session.players)}\n{p_list}"
                 await session.lobby_msg.edit(embed=embed)
             except: pass
 
     @app_commands.command(name="debug", description="Admin Debug Tools")
     @app_commands.choices(action=[
         app_commands.Choice(name="Give Powerup", value="give_pup"),
+        app_commands.Choice(name="Simulate Incoming Effect", value="sim_effect"),
         app_commands.Choice(name="Random Answer (Self)", value="rand_ans"),
         app_commands.Choice(name="Ping / Uptime", value="ping")
     ])
@@ -1250,6 +1314,40 @@ class Gameplay(commands.Cog):
                 await interaction.response.send_message(f"✅ Added {target.name}", ephemeral=True)
             else:
                 await interaction.response.send_message("Powerup not found.", ephemeral=True)
+
+        elif action == "sim_effect":
+            all_pups = load_powerups()
+            target_pup = next((p for p in all_pups if p.name == powerup_name), None)
+            if not target_pup:
+                await interaction.response.send_message("Powerup not found.", ephemeral=True)
+                return
+
+            if target_pup.effect == EffectType.GIFT:
+                player.score += int(target_pup.value)
+                player.notifications.append(f"🎁 **Debug Gift: {int(target_pup.value)} pts!**")
+                await interaction.response.send_message(f"✅ Simulated incoming {target_pup.name} (+{int(target_pup.value)} pts)", ephemeral=True)
+                # Force update to show score change
+                await push_update_to_player(session, player)
+
+            elif target_pup.effect == EffectType.GLITCH:
+                await interaction.response.send_message(f"✅ Simulated incoming {target_pup.name}", ephemeral=True)
+                # Trigger glitch visual
+                asyncio.create_task(push_update_to_player(session, player, glitch=True))
+                # Revert task
+                async def revert():
+                    await asyncio.sleep(10)
+                    asyncio.create_task(push_update_to_player(session, player, glitch=False))
+                self.bot.loop.create_task(revert())
+
+            elif target_pup.effect == EffectType.POWER_PLAY:
+                session.global_powerplay_end = time.time() + 20
+                session.global_powerplay_active = True
+                for p in session.players.values():
+                    asyncio.create_task(push_update_to_player(session, p))
+                await interaction.response.send_message(f"✅ Simulated Global {target_pup.name}", ephemeral=True)
+            
+            else:
+                await interaction.response.send_message(f"Simulation not supported for {target_pup.effect} (Effect usually applies to sender).", ephemeral=True)
         
         elif action == "rand_ans":
             if not session.is_running or player.completed:
