@@ -642,6 +642,22 @@ class StartConnector(discord.ui.View):
         player = register_new_player(self.session, interaction.user)
         await open_board_logic(interaction, self.session, player)
 
+class EndGameConfirmationView(discord.ui.View):
+    def __init__(self, session):
+        super().__init__(timeout=60)
+        self.session = session
+
+    @discord.ui.button(label="Yes, End Game", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Calls the existing finish logic
+        await finish_game_logic(self.session, interaction)
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="❌ **End Game Cancelled.**", view=None)
+        self.stop()
+
 class LiveDashboardView(discord.ui.View):
     def __init__(self, session: GameSession):
         super().__init__(timeout=None)
@@ -658,11 +674,18 @@ class LiveDashboardView(discord.ui.View):
         await interaction.response.send_message(f"🏅 **Your Rank:** #{rank} / {total}\n**Score:** {player.score} pts\n**Streak:** {player.streak} 🔥", ephemeral=True)
     @discord.ui.button(label="End Game (Admin)", style=discord.ButtonStyle.danger, row=1)
     async def end_game(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # [CHANGE] Strict Check: Only hardcoded ADMIN_IDS can end the game
+        # Strict Check: Only hardcoded ADMIN_IDS can end the game
         if interaction.user.id not in ADMIN_IDS:
             await interaction.response.send_message("⛔ Bot Admin Only.", ephemeral=True)
             return
-        await finish_game_logic(self.session, interaction)
+        
+        # Trigger Confirmation
+        view = EndGameConfirmationView(self.session)
+        await interaction.response.send_message(
+            "⚠️ **Are you sure you want to forcibly end this game?**\nThis action cannot be undone.", 
+            view=view, 
+            ephemeral=True
+        )
 
 class AdminDashboard(discord.ui.View):
     def __init__(self, session: GameSession):
@@ -965,7 +988,6 @@ class GameView(discord.ui.View):
                     self.reorder_sequence.clear()
                     self.save_view_state()
                     
-                    # [CHANGE] Unpack tuple from build_game_embed
                     embed, content = build_game_embed(
                         self.player, 
                         self.current_q, 
@@ -975,7 +997,6 @@ class GameView(discord.ui.View):
                         powerplay_active=self.session.global_powerplay_active
                     )
                     
-                    # [IMPORTANT] clear_items is required here to reset buttons for the retry
                     self.clear_items()
                     self.setup_answer_buttons()
                     self.setup_powerup_buttons()
@@ -983,6 +1004,14 @@ class GameView(discord.ui.View):
                     final_msg = f"🛡️ **Immunity used!**\n{content}".strip()
                     await interaction.response.edit_message(content=final_msg or None, embed=embed, view=self)
                     return
+            
+            # [RESTORED] These lines were missing!
+            self.player.incorrect_answers += 1
+            self.session.question_stats[self.real_q_index] += 1
+            if any(p.effect == EffectType.DOUBLE_JEOPARDY for p in self.player.active_powerups):
+                self.player.score = 0
+            if not any(p.effect == EffectType.STREAK_SAVER for p in self.player.active_powerups):
+                self.player.streak = 0
         
         points = 0
         new_pup = None
