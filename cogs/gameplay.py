@@ -25,47 +25,108 @@ ADMIN_IDS = [368792134645448704, 193855542366568448]
 SERVER_ID = 238080556708003851
 ROLE_ID = 983357933565919252
 
-def create_share_card(stats, user_name):
-    # Canvas Setup
-    W, H = 600, 300
-    bg_color = (44, 47, 51) # Discord Dark
-    text_color = (255, 255, 255)
-    accent_color = (255, 215, 0) # Gold
+def create_share_card(stats, user_name, avatar_bytes=None):
+    # Canvas Setup (High-res for quality)
+    W, H = 900, 550
+    bg_color = (35, 39, 42) # Dark background
     
     image = Image.new("RGB", (W, H), color=bg_color)
     draw = ImageDraw.Draw(image)
     
-    # Load Fonts (Fallback to default if unavailable)
-    try:
-        font_large = ImageFont.truetype("arial.ttf", 48)
-        font_med = ImageFont.truetype("arial.ttf", 32)
-        font_small = ImageFont.truetype("arial.ttf", 24)
-    except:
-        font_large = ImageFont.load_default()
-        font_med = ImageFont.load_default()
-        font_small = ImageFont.load_default()
+    # --- 1. Draw Fun Background Blobs ---
+    def draw_blob(x, y, r, color):
+        draw.ellipse((x-r, y-r, x+r, y+r), fill=color)
 
-    # Draw Title
-    draw.text((30, 30), "Quiz Result", font=font_small, fill=text_color)
-    draw.text((30, 60), stats['quiz_name'][:25], font=font_large, fill=accent_color)
+    draw_blob(60, 60, 120, (50, 50, 80))   
+    draw_blob(850, 500, 150, (60, 40, 60)) 
+    draw_blob(450, -60, 100, (40, 60, 40))  
+
+    # --- 2. Load Fonts ---
+    def load_font(size):
+        font_options = ["arialbd.ttf", "arial.ttf", "DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "FreeSansBold.ttf", "FreeSans.ttf"]
+        for font_name in font_options:
+            try: return ImageFont.truetype(font_name, size)
+            except: continue
+        return ImageFont.load_default()
+
+    font_title = load_font(80)
+    font_quiz = load_font(55)
+    font_label = load_font(45)
+    font_stat_label = load_font(35)
+
+    # --- 3. Draw Header Info ---
+    draw.text((50, 40), "QUIZ RESULT!", font=font_title, fill=(255, 215, 0))
     
-    # Draw User Name
-    draw.text((30, 130), f"Player: {user_name}", font=font_med, fill=text_color)
-    
-    # Draw Stats Grid
-    # Rank
-    draw.text((30, 200), "Rank", font=font_small, fill=(180, 180, 180))
-    draw.text((30, 230), f"#{stats['rank']}", font=font_med, fill=text_color)
-    
-    # Score
-    draw.text((200, 200), "Score", font=font_small, fill=(180, 180, 180))
-    draw.text((200, 230), str(stats['score']), font=font_med, fill=text_color)
-    
-    # Accuracy
-    draw.text((370, 200), "Accuracy", font=font_small, fill=(180, 180, 180))
-    draw.text((370, 230), f"{stats['accuracy']:.1f}%", font=font_med, fill=text_color)
-    
-    return image
+    quiz_name = stats['quiz_name']
+    if len(quiz_name) > 20: quiz_name = quiz_name[:18] + "..."
+    draw.text((50, 130), quiz_name, font=font_quiz, fill=(255, 255, 255))
+    draw.text((50, 200), f"Player: {user_name}", font=font_label, fill=(200, 200, 200))
+
+    # --- 4. Draw Avatar (Top Right) ---
+    if avatar_bytes:
+        try:
+            av_size = 180
+            av_im = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+            av_im = av_im.resize((av_size, av_size), Image.Resampling.LANCZOS)
+            mask = Image.new("L", (av_size, av_size), 0)
+            draw_mask = ImageDraw.Draw(mask)
+            draw_mask.ellipse((0, 0, av_size, av_size), fill=255)
+            image.paste(av_im, (W - 220, 40), mask)
+            draw.ellipse((W - 220, 40, W - 40, 220), outline=(255, 215, 0), width=6)
+        except: pass 
+
+    # --- 5. Draw Bubbles with Dynamic Scaling ---
+    def draw_bubble(x, y, w, h, color, label, value):
+        # Draw bubble shape
+        draw.rounded_rectangle((x+8, y+8, x+w+8, y+h+8), radius=25, fill=(20, 20, 20))
+        draw.rounded_rectangle((x, y, x+w, y+h), radius=25, fill=color)
+        
+        # Draw Label (Top Centered)
+        l_bbox = draw.textbbox((0, 0), label, font=font_stat_label)
+        l_w = l_bbox[2] - l_bbox[0]
+        draw.text((x + (w - l_w)/2, y + 20), label, font=font_stat_label, fill=(255, 255, 255))
+        
+        # Draw Value (Dynamic Fit)
+        val_str = str(value)
+        font_size = 80
+        padding = 30 # px padding on sides
+        
+        # Shrink font until it fits
+        while font_size > 30:
+            current_font = load_font(font_size)
+            bbox = draw.textbbox((0, 0), val_str, font=current_font)
+            text_w = bbox[2] - bbox[0]
+            if text_w < (w - padding):
+                break
+            font_size -= 5
+            
+        # Calculate final position
+        final_font = load_font(font_size)
+        bbox = draw.textbbox((0, 0), val_str, font=final_font)
+        text_w = bbox[2] - bbox[0]
+        
+        # Adjust Y position to keep it vertically centered-ish relative to the original 80px baseline
+        # Baseline Y was y+75 for 80px font. We push it down slightly if font is smaller.
+        y_offset = 75 + (80 - font_size) // 2
+        
+        draw.text((x + (w - text_w)/2, y + y_offset), val_str, font=final_font, fill=(255, 255, 255))
+
+    bubble_y = 300
+    bubble_w = 240
+    bubble_h = 180
+    gap = 40
+    start_x = (W - (3 * bubble_w + 2 * gap)) / 2
+
+    draw_bubble(start_x, bubble_y, bubble_w, bubble_h, (46, 204, 113), "RANK", f"#{stats['rank']}")
+    draw_bubble(start_x + bubble_w + gap, bubble_y, bubble_w, bubble_h, (52, 152, 219), "SCORE", stats['score'])
+    draw_bubble(start_x + 2*(bubble_w + gap), bubble_y, bubble_w, bubble_h, (231, 76, 60), "ACCURACY", f"{stats['accuracy']:.0f}%")
+
+    # --- FINAL STEP: Resize by 50% ---
+    target_w = int(W * 0.5)
+    target_h = int(H * 0.5)
+    resized_image = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+    return resized_image
 
 def is_privileged(interaction: discord.Interaction) -> bool:
     # 1. Global Admin Override
@@ -1126,9 +1187,17 @@ class Gameplay(commands.Cog):
         # Defer while generating image
         await interaction.response.defer()
         
+        # Get Avatar Bytes
+        avatar_bytes = None
+        if interaction.user.display_avatar:
+            try:
+                avatar_bytes = await interaction.user.display_avatar.read()
+            except:
+                pass
+
         # Generate Image
         try:
-            image = create_share_card(stats, interaction.user.display_name)
+            image = create_share_card(stats, interaction.user.display_name, avatar_bytes)
             
             # Save to buffer
             with io.BytesIO() as image_binary:
