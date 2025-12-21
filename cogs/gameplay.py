@@ -298,16 +298,24 @@ async def open_board_logic(interaction: discord.Interaction, session: GameSessio
     except: rank = 0
     rank_str = f"#{rank}"
     
-    # [CHANGE] Unpack 3 values
     embed, content, file = build_game_embed(player, q1, player.current_q_index + 1, rank_str, powerplay_active=session.global_powerplay_active)
     
     view = GameView(session, player)
     
-    # [CHANGE] Pass file to send/followup
+    # [FIX] Construct arguments conditionally so we don't pass file=None
+    send_kwargs = {
+        "content": content or None,
+        "embed": embed,
+        "view": view,
+        "ephemeral": True
+    }
+    if file:
+        send_kwargs["file"] = file
+
     if interaction.response.is_done():
-        msg = await interaction.followup.send(content=content or None, embed=embed, view=view, file=file, ephemeral=True)
+        msg = await interaction.followup.send(**send_kwargs)
     else:
-        await interaction.response.send_message(content=content or None, embed=embed, view=view, file=file, ephemeral=True)
+        await interaction.response.send_message(**send_kwargs)
         msg = await interaction.original_response()
     player.board_message = msg
 
