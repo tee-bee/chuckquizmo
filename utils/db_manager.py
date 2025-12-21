@@ -223,8 +223,8 @@ def get_roundup_data(session_ids):
     if q_rows:
         easiest = q_rows[0]
         hardest = q_rows[-1]
-        data['easiest_q'] = f"{easiest[0][:40]}... ({easiest[1]*100:.1f}%)"
-        data['hardest_q'] = f"{hardest[0][:40]}... ({hardest[1]*100:.1f}%)"
+        data['easiest_q'] = f"{easiest[0][:80]}... ({easiest[1]*100:.1f}%)"
+        data['hardest_q'] = f"{hardest[0][:80]}... ({hardest[1]*100:.1f}%)"
     else:
         data['easiest_q'] = "N/A"
         data['hardest_q'] = "N/A"

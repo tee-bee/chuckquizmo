@@ -50,17 +50,46 @@ def create_share_card(stats, user_name, avatar_bytes=None):
         return ImageFont.load_default()
 
     font_title = load_font(80)
-    font_quiz = load_font(55)
-    font_label = load_font(45)
+    # font_quiz is now dynamic below
+    # font_label is now dynamic below
     font_stat_label = load_font(35)
 
     # --- 3. Draw Header Info ---
     draw.text((50, 40), "QUIZ RESULT!", font=font_title, fill=(255, 215, 0))
     
+    # [CHANGE] Quiz Name - Dynamic Sizing
     quiz_name = stats['quiz_name']
-    if len(quiz_name) > 20: quiz_name = quiz_name[:18] + "..."
+    q_size = 55
+    max_w = W - 250 # Space available before hitting avatar area
+    
+    # Shrink loop
+    while q_size > 25:
+        font_quiz = load_font(q_size)
+        bbox = draw.textbbox((0, 0), quiz_name, font=font_quiz)
+        text_w = bbox[2] - bbox[0]
+        if text_w < max_w:
+            break
+        q_size -= 2
+        
+    # Truncate fallback if shrinking wasn't enough
+    if draw.textbbox((0, 0), quiz_name, font=font_quiz)[2] > max_w:
+         quiz_name = quiz_name[:20] + "..."
+
     draw.text((50, 130), quiz_name, font=font_quiz, fill=(255, 255, 255))
-    draw.text((50, 200), f"Player: {user_name}", font=font_label, fill=(200, 200, 200))
+    
+    # [CHANGE] User Name - Dynamic Sizing
+    user_str = f"Player: {user_name}"
+    u_size = 45 
+    
+    while u_size > 20:
+        font_label = load_font(u_size)
+        bbox = draw.textbbox((0, 0), user_str, font=font_label)
+        text_w = bbox[2] - bbox[0]
+        if text_w < max_w:
+            break
+        u_size -= 2
+        
+    draw.text((50, 200), user_str, font=font_label, fill=(200, 200, 200))
 
     # --- 4. Draw Avatar (Top Right) ---
     if avatar_bytes:
@@ -77,21 +106,18 @@ def create_share_card(stats, user_name, avatar_bytes=None):
 
     # --- 5. Draw Bubbles with Dynamic Scaling ---
     def draw_bubble(x, y, w, h, color, label, value):
-        # Draw bubble shape
         draw.rounded_rectangle((x+8, y+8, x+w+8, y+h+8), radius=25, fill=(20, 20, 20))
         draw.rounded_rectangle((x, y, x+w, y+h), radius=25, fill=color)
         
-        # Draw Label (Top Centered)
         l_bbox = draw.textbbox((0, 0), label, font=font_stat_label)
         l_w = l_bbox[2] - l_bbox[0]
         draw.text((x + (w - l_w)/2, y + 20), label, font=font_stat_label, fill=(255, 255, 255))
         
-        # Draw Value (Dynamic Fit)
+        # Dynamic Value Sizing
         val_str = str(value)
         font_size = 80
-        padding = 30 # px padding on sides
+        padding = 30
         
-        # Shrink font until it fits
         while font_size > 30:
             current_font = load_font(font_size)
             bbox = draw.textbbox((0, 0), val_str, font=current_font)
@@ -100,13 +126,9 @@ def create_share_card(stats, user_name, avatar_bytes=None):
                 break
             font_size -= 5
             
-        # Calculate final position
         final_font = load_font(font_size)
         bbox = draw.textbbox((0, 0), val_str, font=final_font)
         text_w = bbox[2] - bbox[0]
-        
-        # Adjust Y position to keep it vertically centered-ish relative to the original 80px baseline
-        # Baseline Y was y+75 for 80px font. We push it down slightly if font is smaller.
         y_offset = 75 + (80 - font_size) // 2
         
         draw.text((x + (w - text_w)/2, y + y_offset), val_str, font=final_font, fill=(255, 255, 255))
