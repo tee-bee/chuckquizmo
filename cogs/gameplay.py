@@ -8,17 +8,64 @@ import os
 import json
 from utils.classes import Quiz, Question, Player, GameSession, CustomPowerUp, EffectType, QuestionType
 from utils.data_manager import load_quiz, load_powerups, get_quiz_lookup
+import io
+from PIL import Image, ImageDraw, ImageFont 
+
 from utils.db_manager import (
     save_full_report, get_recent_sessions, get_session_details, 
     get_total_session_count, get_session_ids_by_limit, 
     get_leaderboard_data, get_roundup_data, get_session_lookup,
     get_history_page, check_results_sent, mark_results_sent,
-    log_moderation_action, ban_user_db, unban_user_db, check_is_banned, get_moderation_history
+    log_moderation_action, ban_user_db, unban_user_db, check_is_banned, get_moderation_history,
+    get_user_last_quiz_stats 
 )
+
 
 ADMIN_IDS = [368792134645448704, 193855542366568448]
 SERVER_ID = 238080556708003851
 ROLE_ID = 983357933565919252
+
+def create_share_card(stats, user_name):
+    # Canvas Setup
+    W, H = 600, 300
+    bg_color = (44, 47, 51) # Discord Dark
+    text_color = (255, 255, 255)
+    accent_color = (255, 215, 0) # Gold
+    
+    image = Image.new("RGB", (W, H), color=bg_color)
+    draw = ImageDraw.Draw(image)
+    
+    # Load Fonts (Fallback to default if unavailable)
+    try:
+        font_large = ImageFont.truetype("arial.ttf", 48)
+        font_med = ImageFont.truetype("arial.ttf", 32)
+        font_small = ImageFont.truetype("arial.ttf", 24)
+    except:
+        font_large = ImageFont.load_default()
+        font_med = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+
+    # Draw Title
+    draw.text((30, 30), "Quiz Result", font=font_small, fill=text_color)
+    draw.text((30, 60), stats['quiz_name'][:25], font=font_large, fill=accent_color)
+    
+    # Draw User Name
+    draw.text((30, 130), f"Player: {user_name}", font=font_med, fill=text_color)
+    
+    # Draw Stats Grid
+    # Rank
+    draw.text((30, 200), "Rank", font=font_small, fill=(180, 180, 180))
+    draw.text((30, 230), f"#{stats['rank']}", font=font_med, fill=text_color)
+    
+    # Score
+    draw.text((200, 200), "Score", font=font_small, fill=(180, 180, 180))
+    draw.text((200, 230), str(stats['score']), font=font_med, fill=text_color)
+    
+    # Accuracy
+    draw.text((370, 200), "Accuracy", font=font_small, fill=(180, 180, 180))
+    draw.text((370, 230), f"{stats['accuracy']:.1f}%", font=font_med, fill=text_color)
+    
+    return image
 
 def is_privileged(interaction: discord.Interaction) -> bool:
     # 1. Global Admin Override
@@ -412,7 +459,17 @@ class ReportNavigator(discord.ui.View):
         p = self.players_data[index]
         embed = discord.Embed(title=f"👤 {p.name}", color=0x00BFFF)
         time_str = f"{int(p.total_time // 60)}m {int(p.total_time % 60)}s"
-        embed.add_field(name="Stats", value=f"Score: {p.score}\nCorrect: {p.correct_answers}\nTime: {time_str}", inline=False)
+        
+        # Calculate Average Time
+        attempts = len(p.answers_log)
+        avg_time = (p.total_time / attempts) if attempts > 0 else 0.0
+        
+        stats_val = (f"Score: {p.score}\n"
+                     f"Correct: {p.correct_answers}/{attempts}\n"
+                     f"Total Time: {time_str}\n"
+                     f"Avg Time/Q: {avg_time:.2f}s")
+                     
+        embed.add_field(name="Stats", value=stats_val, inline=False)
         log = ""
         for l in p.answers_log:
             status = "✅" if l['is_correct'] else "❌"
@@ -475,7 +532,10 @@ class IntermissionView(discord.ui.View):
         if self.player.current_q_index >= len(self.player.question_order):
              self.player.completed = True
              self.player.completion_timestamp = time.time()
-             await interaction.response.edit_message(content=f"🎉 **Completed!** Final Score: {self.player.score}", view=None, embed=None)
+             msg = (f"🎉 **You have finished!**\n"
+                    f"Final Score: {self.player.score}\n\n"
+                    f"💡 *Tip: Use `/share` to show off your result card!*")
+             await interaction.response.edit_message(content=msg, view=None, embed=None)
              return
         real_idx = self.player.question_order[self.player.current_q_index]
         next_q = self.session.quiz.questions[real_idx]
@@ -1055,6 +1115,29 @@ class Gameplay(commands.Cog):
                 choices.append(app_commands.Choice(name=p.name, value=p.name))
         return choices[:25]
 
+    @app_commands.command(name="share", description="Share your result from the last quiz")
+    async def share_cmd(self, interaction: discord.Interaction):
+        # Fetch stats
+        stats = get_user_last_quiz_stats(interaction.user.id)
+        if not stats:
+            await interaction.response.send_message("No recent quiz history found.", ephemeral=True)
+            return
+        
+        # Defer while generating image
+        await interaction.response.defer()
+        
+        # Generate Image
+        try:
+            image = create_share_card(stats, interaction.user.display_name)
+            
+            # Save to buffer
+            with io.BytesIO() as image_binary:
+                image.save(image_binary, 'PNG')
+                image_binary.seek(0)
+                await interaction.followup.send(file=discord.File(fp=image_binary, filename="result.png"))
+        except Exception as e:
+            await interaction.followup.send(f"Failed to generate image: {e}")
+    
     @app_commands.command(name="results", description="Generate formatted results for a session")
     @app_commands.autocomplete(session_id=session_autocomplete)
     async def results_cmd(self, interaction: discord.Interaction, session_id: int, channel: discord.TextChannel, custom_message: str, emoji: str = "💀"):

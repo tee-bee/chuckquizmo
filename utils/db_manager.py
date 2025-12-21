@@ -389,3 +389,31 @@ def get_moderation_history(limit=25):
     rows = c.fetchall()
     conn.close()
     return rows
+
+def get_user_last_quiz_stats(user_id):
+    conn = get_connection()
+    c = conn.cursor()
+    # Find the latest session where this user has a player entry
+    query = '''
+        SELECT p.score, p.rank, p.correct_count, p.incorrect_count, s.quiz_name
+        FROM players p
+        JOIN sessions s ON p.session_id = s.session_id
+        WHERE p.user_id = ?
+        ORDER BY s.date_played DESC
+        LIMIT 1
+    '''
+    c.execute(query, (user_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row: return None
+    
+    total = row['correct_count'] + row['incorrect_count']
+    accuracy = (row['correct_count'] / total * 100) if total > 0 else 0.0
+    
+    return {
+        "score": row['score'],
+        "rank": row['rank'],
+        "accuracy": accuracy,
+        "quiz_name": row['quiz_name']
+    }
