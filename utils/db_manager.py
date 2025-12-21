@@ -223,8 +223,9 @@ def get_roundup_data(session_ids):
     if q_rows:
         easiest = q_rows[0]
         hardest = q_rows[-1]
-        data['easiest_q'] = f"{easiest[0][:80]}... ({easiest[1]*100:.1f}%)"
-        data['hardest_q'] = f"{hardest[0][:80]}... ({hardest[1]*100:.1f}%)"
+        # [CHANGE] Increased limit to 1000 (Discord embed field max is 1024)
+        data['easiest_q'] = f"{easiest[0][:1000]}... ({easiest[1]*100:.1f}%)"
+        data['hardest_q'] = f"{hardest[0][:1000]}... ({hardest[1]*100:.1f}%)"
     else:
         data['easiest_q'] = "N/A"
         data['hardest_q'] = "N/A"
