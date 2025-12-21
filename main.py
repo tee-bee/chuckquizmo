@@ -48,43 +48,37 @@ async def reload_cog(interaction: discord.Interaction, extension: str):
         await interaction.followup.send("⛔ Admin only.")
         return
 
+    # 1. Try Loading/Reloading as a Discord Extension (Cog)
     try:
-        # Try reloading as a Discord Extension (Cogs)
-        await interaction.client.reload_extension(extension)
-        await interaction.client.tree.sync()
-        
-        # UPDATE TIMESTAMP
-        interaction.client.extension_times[extension] = time.time()
-        
-        await interaction.followup.send(f"✅ **Reloaded Extension:** `{extension}`")
-        
-    except commands.ExtensionNotLoaded:
         try:
-            # Try loading it as new
+            await interaction.client.reload_extension(extension)
+        except commands.ExtensionNotLoaded:
             await interaction.client.load_extension(extension)
-            await interaction.client.tree.sync()
-            
-            # UPDATE TIMESTAMP
-            interaction.client.extension_times[extension] = time.time()
-            
-            await interaction.followup.send(f"✅ **Loaded New Extension:** `{extension}`")
-        except Exception as e:
-             await interaction.followup.send(f"❌ **Load Error:** `{e}`")
+        
+        # If successful:
+        await interaction.client.tree.sync()
+        interaction.client.extension_times[extension] = time.time()
+        await interaction.followup.send(f"✅ **Reloaded Extension:** `{extension}`")
+        return
 
-    except commands.NoEntryPointError:
-        # Python module reload (Utils)
-        try:
-            if extension in sys.modules:
-                importlib.reload(sys.modules[extension])
-                await interaction.followup.send(f"✅ **Reloaded Module:** `{extension}`")
-            else:
-                importlib.import_module(extension)
-                await interaction.followup.send(f"✅ **Imported Module:** `{extension}`")
-        except Exception as e:
-            await interaction.followup.send(f"❌ **Module Error:** `{e}`")
-
+    except (commands.NoEntryPointError, commands.ExtensionFailed):
+        # 2. If it fails because it's not a Cog (No setup function), try Module Reload
+        pass
     except Exception as e:
-        await interaction.followup.send(f"❌ **Error:** `{e}`")
+        # Real errors (Syntax, etc)
+        await interaction.followup.send(f"❌ **Extension Error:** `{e}`")
+        return
+
+    # 3. Python Module Reload (for Utils)
+    try:
+        if extension in sys.modules:
+            importlib.reload(sys.modules[extension])
+            await interaction.followup.send(f"✅ **Reloaded Module:** `{extension}`")
+        else:
+            importlib.import_module(extension)
+            await interaction.followup.send(f"✅ **Imported Module:** `{extension}`")
+    except Exception as e:
+        await interaction.followup.send(f"❌ **Module Error:** `{e}`")
 
 # --- BOT CLASS ---
 
