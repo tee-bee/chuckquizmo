@@ -127,7 +127,19 @@ async def push_update_to_player(session: GameSession, player: Player, glitch=Fal
         sorted_players = sorted(session.players.values(), key=lambda p: p.score, reverse=True)
         try: rank = sorted_players.index(player) + 1
         except: rank = 0
-        embed = build_game_embed(player, q, player.current_q_index + 1, f"#{rank}", glitch_active=glitch)
+
+        # Retrieve reorder sequence from state if available so it doesn't disappear from UI
+        cur_seq = player.view_state.get('reorder')
+
+        embed = build_game_embed(
+            player, 
+            q, 
+            player.current_q_index + 1, 
+            f"#{rank}", 
+            current_sequence=cur_seq,
+            glitch_active=glitch,
+            powerplay_active=session.global_powerplay_active # FIXED: Pass global state
+        )
         await player.board_message.edit(embed=embed)
     except: pass
 
@@ -141,7 +153,10 @@ async def open_board_logic(interaction: discord.Interaction, session: GameSessio
     try: rank = sorted_players.index(player) + 1
     except: rank = 0
     rank_str = f"#{rank}"
-    embed = build_game_embed(player, q1, player.current_q_index + 1, rank_str)
+    
+    # Pass powerplay state here too
+    embed = build_game_embed(player, q1, player.current_q_index + 1, rank_str, powerplay_active=session.global_powerplay_active)
+    
     view = GameView(session, player)
     if interaction.response.is_done():
         msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
@@ -467,7 +482,7 @@ class IntermissionView(discord.ui.View):
         try: rank = sorted_players.index(self.player) + 1
         except: rank = 0
         self.player.current_q_timestamp = time.time()
-        embed = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}")
+        embed = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}", powerplay_active=self.session.global_powerplay_active)
         view = GameView(self.session, self.player)
         msg = await interaction.response.edit_message(content=None, embed=embed, view=view)
 
@@ -1387,44 +1402,6 @@ class Gameplay(commands.Cog):
         view = HistoryPaginationView()
         await interaction.response.send_message(content="Select a session:", view=view, ephemeral=True)
 
-    @tasks.loop(seconds=1)
-    async def check_timeouts(self):
-        now = time.time()
-        for session in active_sessions.values():
-            if not session.is_running: continue
-            for player in session.players.values():
-                if player.completed or player.current_q_timestamp == 0: continue
-                is_frozen = any(p.effect == EffectType.TIME_FREEZE for p in player.active_powerups)
-                if is_frozen: continue
-                q_idx = player.question_order[player.current_q_index]
-                q = session.quiz.questions[q_idx]
-                if now > (player.current_q_timestamp + q.time_limit + 1):
-                    player.incorrect_answers += 1
-                    session.question_stats[q_idx] += 1
-                    if any(p.effect == EffectType.DOUBLE_JEOPARDY for p in player.active_powerups): player.score = 0
-                    if not any(p.effect == EffectType.STREAK_SAVER for p in player.active_powerups): player.streak = 0
-                    player.answers_log.append({
-                        "q_index": q_idx, "q_text": q.text, "chosen": [], "chosen_text": "TIMEOUT", "is_correct": False, "time": q.time_limit, "points": 0
-                    })
-                    player.active_powerups.clear()
-                    player.current_q_index += 1
-                    player.current_q_timestamp = 0 
-                    if player.board_message:
-                        try:
-                            is_last = player.current_q_index >= len(player.question_order)
-                            color = 0xFF0000
-                            embed = discord.Embed(title="⏰ Time's Up!", description=f"**Points:** +0\n**Streak:** {player.streak} 🔥\n", color=color)
-                            if q.explanation: embed.description += f"\n**Explanation:**\n{q.explanation}"
-                            if q.type == QuestionType.REORDER:
-                                ans_str = " -> ".join([q.options[i] for i in q.correct_indices])
-                                embed.add_field(name="Correct Sequence", value=ans_str)
-                            else:
-                                ans_str = ", ".join([q.options[i] for i in q.correct_indices])
-                                embed.add_field(name="Correct Answer", value=ans_str)
-                            view = IntermissionView(session, player, False, ans_str, 0, None, is_last_question=is_last)
-                            await player.board_message.edit(content=None, embed=embed, view=view)
-                        except: pass
-
     @tasks.loop(seconds=5)
     async def dashboard_update(self):
         if not self.state_loaded: return
@@ -1453,4 +1430,3 @@ class Gameplay(commands.Cog):
                         
 async def setup(bot):
     await bot.add_cog(Gameplay(bot))
-
