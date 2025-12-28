@@ -1177,6 +1177,47 @@ class GameView(discord.ui.View):
         elif self.player.board_message:
             await self.player.board_message.edit(content=None, embed=embed, view=view, attachments=[])
 
+class StartAnnouncementView(discord.ui.View):
+    def __init__(self, cog, quiz, announce_channel, announcement_text, origin_interaction):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.quiz = quiz
+        self.announce_channel = announce_channel
+        self.text = announcement_text
+        self.origin_interaction = origin_interaction
+        self.responded = False
+
+    async def start_game(self, interaction):
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        
+        # Start the game logic
+        await self.cog._start_game_routine(self.origin_interaction, self.quiz)
+
+    @discord.ui.button(label="✅ Send & Start", style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.responded: return
+        self.responded = True
+        
+        # Send Announcement
+        try:
+            await self.announce_channel.send(self.text)
+            await interaction.followup.send(f"📢 Announcement sent to {self.announce_channel.mention}!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"⚠️ Failed to send announcement: {e}", ephemeral=True)
+            
+        await self.start_game(interaction)
+
+    @discord.ui.button(label="❌ Start without Announcing", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.responded: return
+        self.responded = True
+        
+        await interaction.followup.send("🔕 Announcement skipped.", ephemeral=True)
+        await self.start_game(interaction)
+
 class Gameplay(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -1192,7 +1233,34 @@ class Gameplay(commands.Cog):
         self.dashboard_update.cancel()
         self.bump_task.cancel()
         self.check_timeouts.cancel()
+    
+    async def _start_game_routine(self, interaction: discord.Interaction, quiz: Quiz):
+        # Check if session exists
+        if interaction.channel_id in active_sessions:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("⚠️ A game is already running here!", ephemeral=True)
+            else:
+                await interaction.followup.send("⚠️ A game is already running here!", ephemeral=True)
+            return
 
+        # Create Session
+        session = GameSession(interaction.channel_id, quiz)
+        session.is_running = True
+        session.start_time = time.time()
+        
+        active_sessions[interaction.channel_id] = session
+        
+        msg = f"✅ **Starting {quiz.name}...**"
+        if not interaction.response.is_done():
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await interaction.followup.send(msg, ephemeral=True)
+
+        # Post Dashboard & Connector
+        dash_embed = discord.Embed(title="📊 Live Leaderboard", description="Starting...", color=0xFFD700)
+        session.dashboard_msg = await interaction.channel.send(embed=dash_embed, view=LiveDashboardView(session))
+        session.connector_msg = await interaction.channel.send("🚀 **Game is Live!**", view=StartConnector(session))
+    
     def save_state(self):
         if not self.state_loaded: return
         data = {}
@@ -1454,7 +1522,12 @@ class Gameplay(commands.Cog):
 
     @app_commands.command(name="start_quiz", description="Start a quiz immediately (Admin)")
     @app_commands.autocomplete(quiz_name=quiz_autocomplete)
-    async def start_quiz(self, interaction: discord.Interaction, quiz_name: str):
+    @app_commands.describe(
+        announce_channel="Channel to post the announcement in (Optional)",
+        theme="Theme name for the announcement text",
+        last_chance="Is this the last chance for the background?"
+    )
+    async def start_quiz(self, interaction: discord.Interaction, quiz_name: str, announce_channel: discord.TextChannel = None, theme: str = None, last_chance: bool = False):
         if not is_privileged(interaction):
             await interaction.response.send_message("⛔ Admin Only.", ephemeral=True)
             return
@@ -1464,19 +1537,34 @@ class Gameplay(commands.Cog):
             await interaction.response.send_message("Quiz not found.", ephemeral=True)
             return
 
-        # Create Session & Start Immediately
-        session = GameSession(interaction.channel_id, quiz)
-        session.is_running = True
-        session.start_time = time.time()
-        
-        active_sessions[interaction.channel_id] = session
-        
-        await interaction.response.send_message(f"✅ **Starting {quiz.name}...**", ephemeral=True)
+        # If no announcement channel is specified, just start immediately (Old Behavior)
+        if not announce_channel:
+            await self._start_game_routine(interaction, quiz)
+            return
 
-        # Post Dashboard & Connector
-        dash_embed = discord.Embed(title="📊 Live Leaderboard", description="Starting...", color=0xFFD700)
-        session.dashboard_msg = await interaction.channel.send(embed=dash_embed, view=LiveDashboardView(session))
-        session.connector_msg = await interaction.channel.send("🚀 **Game is Live!**", view=StartConnector(session))
+        # Prepare Announcement Text
+        role_id = 1000858980588998666
+        discussion_channel_id = 885959184171032596
+        
+        lc_text = "This is your last chance for the background!" if last_chance else ""
+        theme_text = theme if theme else "[THEME]"
+        
+        announcement = (
+            f"<@&{role_id}>\n"
+            f"# {quiz.name} Trivia\n"
+            f"Today's quiz is about **{quiz.name}**! Participants who get 25% or more of the questions correct will receive the {theme_text} background while the top 3 winners receive or upgrade their profile trophy. {lc_text}\n\n"
+            f"*We will be continuing our use of the Chuck Quizmo bot for this trivia, so you can play entirely in Discord! Please be patient if any issues occur as we are still improving its in-server implementation*\n\n"
+            f"It begins now! Open your game board in the channel below and come to <#{discussion_channel_id}> afterwards to discuss! You can also share your results with ``/share``!\n"
+            f"## {interaction.channel.mention}"
+        )
+
+        # Show Preview
+        view = StartAnnouncementView(self, quiz, announce_channel, announcement, interaction)
+        await interaction.response.send_message(
+            f"**📣 Announcement Preview for {announce_channel.mention}:**\n\n{announcement}\n\n*Do you want to send this?*", 
+            view=view, 
+            ephemeral=True
+        )
 
     @app_commands.command(name="lobby", description="View active player list (Admin)")
     async def lobby_command(self, interaction: discord.Interaction):
