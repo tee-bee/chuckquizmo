@@ -215,10 +215,17 @@ def build_game_embed(player: Player, question: Question, question_num: int, rank
             embed.set_image(url=question.image_url)
         # 2. Local File
         elif os.path.exists(question.image_url):
-            filename = os.path.basename(question.image_url)
-            # Create the file object (this effectively 'buffers' it for upload)
-            file_attachment = discord.File(question.image_url, filename=filename)
-            embed.set_image(url=f"attachment://{filename}")
+            # [CRITICAL FIX] Use a safe, generic filename for the attachment protocol.
+            # This avoids issues with spaces/special chars in your local filenames.
+            ext = os.path.splitext(question.image_url)[1]
+            if not ext: ext = ".png"
+            safe_filename = f"quiz_image{ext}"
+            
+            file_attachment = discord.File(question.image_url, filename=safe_filename)
+            embed.set_image(url=f"attachment://{safe_filename}")
+        else:
+            # [DEBUG] Print warning if file is missing so you can fix the path
+            print(f"⚠️ [WARNING] Image not found at path: {question.image_url}")
 
     desc = ""
     if glitch_active: desc += "# 👾 YOU’VE BEEN GLITCHED! 👾\n\n"
@@ -637,21 +644,10 @@ class IntermissionView(discord.ui.View):
              msg = (f"🎉 **You have finished!**\n"
                     f"Final Score: {self.player.score}\n\n"
                     f"💡 *Tip: Use `/share` to show off your result card!*")
-             await interaction.response.edit_message(content=msg, view=None, embed=None)
+             
+             # [FIX] Added attachments=[] to clear images
+             await interaction.response.edit_message(content=msg, view=None, embed=None, attachments=[])
              return
-        real_idx = self.player.question_order[self.player.current_q_index]
-        next_q = self.session.quiz.questions[real_idx]
-        sorted_players = sorted(self.session.players.values(), key=lambda p: p.score, reverse=True)
-        try: rank = sorted_players.index(self.player) + 1
-        except: rank = 0
-        self.player.current_q_timestamp = time.time()
-        
-        # [CHANGE] Unpack and use attachments
-        embed, content, file = build_game_embed(self.player, next_q, self.player.current_q_index + 1, f"#{rank}", powerplay_active=self.session.global_powerplay_active)
-        view = GameView(self.session, self.player)
-        
-        atts = [file] if file else []
-        msg = await interaction.response.edit_message(content=content or None, embed=embed, view=view, attachments=atts)
 
 class StartConnector(discord.ui.View):
     def __init__(self, session):
@@ -1128,9 +1124,9 @@ class GameView(discord.ui.View):
             embed.add_field(name="Correct Answer", value=ans_str)
         view = IntermissionView(self.session, self.player, correct, ans_str, points, powerup, is_last_question=is_last, gift_msg=gift_msg)
         if interaction:
-            await interaction.response.edit_message(content=None, embed=embed, view=view)
+            await interaction.response.edit_message(content=None, embed=embed, view=view, attachments=[])
         elif self.player.board_message:
-            await self.player.board_message.edit(content=None, embed=embed, view=view)
+            await self.player.board_message.edit(content=None, embed=embed, view=view, attachments=[])
 
 class Gameplay(commands.Cog):
     def __init__(self, bot):
@@ -1697,7 +1693,7 @@ class Gameplay(commands.Cog):
                                 ans_str = ", ".join([q.options[i] for i in q.correct_indices])
                                 embed.add_field(name="Correct Answer", value=ans_str)
                             view = IntermissionView(session, player, False, ans_str, 0, None, is_last_question=is_last)
-                            await player.board_message.edit(content=None, embed=embed, view=view)
+                            await player.board_message.edit(content=None, embed=embed, view=view, attachments=[])
                         except: pass
 
     @commands.Cog.listener()

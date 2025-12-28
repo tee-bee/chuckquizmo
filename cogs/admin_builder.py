@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
+import os
 from utils.classes import Quiz, Question, QuestionType
 from utils.data_manager import save_quiz, load_quiz, get_quiz_lookup
 
@@ -278,6 +279,7 @@ class EditorControls(discord.ui.View):
         self.q = quiz.questions[index]
         self.hub_view = hub_view
         self.message = None 
+    
     def get_embed(self):
         embed = discord.Embed(title=f"Editing Q{self.index+1} ({self.q.type})", description=self.q.text, color=0xFFA500)
         opts = ""
@@ -287,13 +289,37 @@ class EditorControls(discord.ui.View):
             opts += f"{chr(65+i)}: {opt} {mark}\n"
         embed.add_field(name="Options", value=opts, inline=False)
         embed.add_field(name="Settings", value=f"Time: {self.q.time_limit}s\nWeight: {self.q.weight}x\nExplanation: {'Yes' if self.q.explanation else 'No'}", inline=False)
-        if self.q.image_url: embed.set_thumbnail(url=self.q.image_url)
+        
+        # [CHANGE] Use set_image for a large preview to confirm upload
+        if self.q.image_url:
+            if self.q.image_url.startswith("http"):
+                embed.set_image(url=self.q.image_url)
+            elif os.path.exists(self.q.image_url):
+                # Point to the attachment we are sending
+                filename = os.path.basename(self.q.image_url)
+                embed.set_image(url=f"attachment://{filename}")
+            else:
+                embed.add_field(name="⚠️ Image Error", value=f"File not found:\n`{self.q.image_url}`", inline=False)
+                
         return embed
+
     async def refresh_display(self, interaction=None):
+        # [CHANGE] Create the file object to attach
+        file_to_send = None
+        if self.q.image_url and not self.q.image_url.startswith("http") and os.path.exists(self.q.image_url):
+            filename = os.path.basename(self.q.image_url)
+            file_to_send = discord.File(self.q.image_url, filename=filename)
+
         try:
-            if self.message: await self.message.edit(embed=self.get_embed())
+            if self.message: 
+                # Attachments must be a list. This replaces existing attachments.
+                atts = [file_to_send] if file_to_send else []
+                await self.message.edit(embed=self.get_embed(), attachments=atts)
         except discord.NotFound:
-            if interaction: await interaction.followup.send(content="Refreshed", embed=self.get_embed(), view=self, ephemeral=True)
+            # Fallback if message was deleted
+            if interaction: 
+                atts = [file_to_send] if file_to_send else []
+                await interaction.followup.send(content="Refreshed", embed=self.get_embed(), view=self, file=file_to_send, ephemeral=True)
     
     @discord.ui.button(label="Edit Text/Opts", style=discord.ButtonStyle.primary, row=0)
     async def edit_txt(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -308,16 +334,35 @@ class EditorControls(discord.ui.View):
     @discord.ui.button(label="Attach Image", style=discord.ButtonStyle.blurple, row=1)
     async def edit_img(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.message = interaction.message
-        await interaction.response.send_message("📷 **Upload Image:**", ephemeral=True)
+        await interaction.response.send_message("📷 **Upload Image:** (Send an image in this channel now)", ephemeral=True)
+        
         def check(m): return m.author == interaction.user and m.channel == interaction.channel and m.attachments
+        
         try:
             msg = await interaction.client.wait_for('message', check=check, timeout=60)
-            self.q.image_url = msg.attachments[0].url
+            
+            # [CHANGE] Save Image Locally
+            if not os.path.exists("data/quiz_images"):
+                os.makedirs("data/quiz_images")
+                
+            safe_name = f"{self.quiz.name}_{self.index}_{msg.attachments[0].filename}"
+            # Remove potentially dangerous characters
+            safe_name = "".join([c for c in safe_name if c.isalpha() or c.isdigit() or c in "._-"])
+            
+            local_path = os.path.join("data", "quiz_images", safe_name)
+            
+            await msg.attachments[0].save(local_path)
+            
+            self.q.image_url = local_path
             save_quiz(self.quiz)
+            
             try: await msg.delete()
             except: pass
-            await interaction.followup.send(f"✅ Attached!", ephemeral=True)
+            
+            # Confirm and Refresh
+            await interaction.followup.send(f"✅ **Saved Locally:** `{safe_name}`", ephemeral=True)
             await self.refresh_display(interaction)
+            
         except asyncio.TimeoutError:
             await interaction.followup.send("❌ Timed out.", ephemeral=True)
 
@@ -329,8 +374,8 @@ class EditorControls(discord.ui.View):
     @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=2)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.hub_view.refresh_display(interaction)
-        await interaction.response.edit_message(content=None, embed=self.hub_view.get_summary_embed(), view=self.hub_view)
-
+        # Clear attachments when going back
+        await interaction.response.edit_message(content=None, embed=self.hub_view.get_summary_embed(), view=self.hub_view, attachments=[])
 class QuizBuilder(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
