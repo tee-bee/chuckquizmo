@@ -638,16 +638,45 @@ class IntermissionView(discord.ui.View):
         if interaction.user.id != self.player.user_id:
             await interaction.response.send_message("Not your board.", ephemeral=True)
             return
+
+        # 1. Check if the game is finished
         if self.player.current_q_index >= len(self.player.question_order):
              self.player.completed = True
              self.player.completion_timestamp = time.time()
-             msg = (f"🎉 **You have finished!**\n"
+             
+             finish_msg = (f"🎉 **You have finished!**\n"
                     f"Final Score: {self.player.score}\n\n"
                     f"💡 *Tip: Use `/share` to show off your result card!*")
              
-             # [FIX] Added attachments=[] to clear images
-             atts = [file] if file else []
-        msg = await interaction.response.edit_message(content=content or None, embed=embed, view=view, attachments=atts)
+             # [FIX] Clear view, embed, and attachments
+             await interaction.response.edit_message(content=finish_msg, view=None, embed=None, attachments=[])
+             self.stop()
+             return
+
+        # 2. Logic to build the NEXT question (This was missing!)
+        real_idx = self.player.question_order[self.player.current_q_index]
+        next_q = self.session.quiz.questions[real_idx]
+        
+        sorted_players = sorted(self.session.players.values(), key=lambda p: p.score, reverse=True)
+        try: rank = sorted_players.index(self.player) + 1
+        except: rank = 0
+        rank_str = f"#{rank}"
+        
+        self.player.current_q_timestamp = time.time()
+        
+        # Build the new board
+        embed, content, file = build_game_embed(
+            self.player, 
+            next_q, 
+            self.player.current_q_index + 1, 
+            rank_str, 
+            powerplay_active=self.session.global_powerplay_active
+        )
+        view = GameView(self.session, self.player)
+        
+        # 3. Send update and STOP the old view
+        atts = [file] if file else []
+        await interaction.response.edit_message(content=content or None, embed=embed, view=view, attachments=atts)
         
         # [FIX] Stop this intermission view so it doesn't stay in memory
         self.stop()
