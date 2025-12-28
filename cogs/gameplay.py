@@ -1868,7 +1868,7 @@ class Gameplay(commands.Cog):
                 sorted_players = sorted(session.players.values(), key=lambda p: p.score, reverse=True)
                 desc = ""
                 for i, p in enumerate(sorted_players[:10]): 
-                    progress = f"{p.current_q_index}/{len(p.question_order)}"
+                    progress = f"{p.current_q_index + 1}/{len(p.question_order)}"
                     status = "✅ Done" if p.completed else f"Q{progress}"
                     desc += f"**{i+1}. {p.name}** - {p.score} pts (Streak: {p.streak} 🔥) [{status}]\n"
                 embed = discord.Embed(title="📊 Live Leaderboard", description=desc, color=0xFFD700)
