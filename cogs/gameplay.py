@@ -1243,10 +1243,11 @@ class Gameplay(commands.Cog):
     async def _start_game_routine(self, interaction: discord.Interaction, quiz: Quiz):
         # Check if session exists
         if interaction.channel_id in active_sessions:
+            msg = "⚠️ A game is already running here!"
             if not interaction.response.is_done():
-                await interaction.response.send_message("⚠️ A game is already running here!", ephemeral=True)
+                await interaction.response.send_message(msg, ephemeral=True)
             else:
-                await interaction.followup.send("⚠️ A game is already running here!", ephemeral=True)
+                await interaction.followup.send(msg, ephemeral=True)
             return
 
         # Create Session
@@ -1543,7 +1544,7 @@ class Gameplay(commands.Cog):
             await interaction.response.send_message("Quiz not found.", ephemeral=True)
             return
 
-        # If no announcement channel is specified, just start immediately (Old Behavior)
+        # If no announcement channel is specified, just start immediately
         if not announce_channel:
             await self._start_game_routine(interaction, quiz)
             return
@@ -1555,17 +1556,18 @@ class Gameplay(commands.Cog):
         lc_text = "This is your last chance for the background!" if last_chance else ""
         theme_text = theme if theme else "[THEME]"
         
+        
         announcement = (
             f"<@&{role_id}>\n"
             f"# {quiz.name} Trivia\n"
             f"Today's quiz is about **{quiz.name}**! Participants who get 25% or more of the questions correct will receive the {theme_text} background while the top 3 winners receive or upgrade their profile trophy. {lc_text}\n\n"
             f"*We will be continuing our use of the Chuck Quizmo bot for this trivia, so you can play entirely in Discord! Please be patient if any issues occur as we are still improving its in-server implementation*\n\n"
             f"It begins now! Open your game board in the channel below and come to <#{discussion_channel_id}> afterwards to discuss! You can also share your results with ``/share``!\n"
-            f"## {interaction.channel.mention}"
+            f"## <#1452347266190020628>"
         )
 
         # Show Preview
-        view = StartAnnouncementView(self, quiz, announce_channel, announcement, interaction)
+        view = StartAnnouncementView(self, quiz, announce_channel, announcement)
         await interaction.response.send_message(
             f"**📣 Announcement Preview for {announce_channel.mention}:**\n\n{announcement}\n\n*Do you want to send this?*", 
             view=view, 
