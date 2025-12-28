@@ -1178,45 +1178,51 @@ class GameView(discord.ui.View):
             await self.player.board_message.edit(content=None, embed=embed, view=view, attachments=[])
 
 class StartAnnouncementView(discord.ui.View):
-    def __init__(self, cog, quiz, announce_channel, announcement_text, origin_interaction):
+    def __init__(self, cog, quiz, announce_channel, announcement_text):
         super().__init__(timeout=300)
         self.cog = cog
         self.quiz = quiz
         self.announce_channel = announce_channel
         self.text = announcement_text
-        self.origin_interaction = origin_interaction
         self.responded = False
 
-    async def start_game(self, interaction):
-        # Disable buttons
+    def disable_all(self):
         for child in self.children:
             child.disabled = True
-        await interaction.response.edit_message(view=self)
-        
-        # Start the game logic
-        await self.cog._start_game_routine(self.origin_interaction, self.quiz)
 
     @discord.ui.button(label="✅ Send & Start", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.responded: return
         self.responded = True
         
-        # Send Announcement
+        # 1. Lock UI immediately (Acknowledges interaction)
+        self.disable_all()
+        await interaction.response.edit_message(view=self)
+        
+        # 2. Send Announcement
         try:
             await self.announce_channel.send(self.text)
             await interaction.followup.send(f"📢 Announcement sent to {self.announce_channel.mention}!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"⚠️ Failed to send announcement: {e}", ephemeral=True)
             
-        await self.start_game(interaction)
+        # 3. Start Game (Using the fresh button interaction)
+        await self.cog._start_game_routine(interaction, self.quiz)
 
     @discord.ui.button(label="❌ Start without Announcing", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.responded: return
         self.responded = True
         
+        # 1. Lock UI immediately
+        self.disable_all()
+        await interaction.response.edit_message(view=self)
+        
+        # 2. Confirm Skip
         await interaction.followup.send("🔕 Announcement skipped.", ephemeral=True)
-        await self.start_game(interaction)
+        
+        # 3. Start Game
+        await self.cog._start_game_routine(interaction, self.quiz)
 
 class Gameplay(commands.Cog):
     def __init__(self, bot):
