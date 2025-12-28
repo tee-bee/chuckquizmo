@@ -646,8 +646,11 @@ class IntermissionView(discord.ui.View):
                     f"💡 *Tip: Use `/share` to show off your result card!*")
              
              # [FIX] Added attachments=[] to clear images
-             await interaction.response.edit_message(content=msg, view=None, embed=None, attachments=[])
-             return
+             atts = [file] if file else []
+        msg = await interaction.response.edit_message(content=content or None, embed=embed, view=view, attachments=atts)
+        
+        # [FIX] Stop this intermission view so it doesn't stay in memory
+        self.stop()
 
 class StartConnector(discord.ui.View):
     def __init__(self, session):
@@ -879,9 +882,15 @@ class GameView(discord.ui.View):
         if len(self.player.active_powerups) > 0:
             await interaction.response.send_message("❌ One powerup per turn!", ephemeral=True)
             return
+            
         parts = interaction.data['custom_id'].split("_")
         index = int(parts[1])
-        if index >= len(self.player.inventory): return
+        
+        # [FIX] Handle invalid index (e.g. double click)
+        if index >= len(self.player.inventory):
+            await interaction.response.send_message("❌ Item no longer available.", ephemeral=True)
+            return
+            
         selected_powerup = self.player.inventory.pop(index)
         self.player.active_powerups.append(selected_powerup)
         self.session.powerup_usage_log.append({'user_id': self.player.user_id, 'name': selected_powerup.name})
@@ -937,9 +946,14 @@ class GameView(discord.ui.View):
         await interaction.response.edit_message(content=final_msg or None, embed=new_embed, view=self, attachments=atts)
 
     async def answer_callback(self, interaction):
-        if self.restored: return await self.handle_restored(interaction) # <--- CHECK
+        if self.restored: return await self.handle_restored(interaction) 
         if not await self.check_ownership(interaction): return
-        if self.player.current_q_timestamp == 0: return
+        
+        # [FIX] Handle late click (Already answered/Timeout)
+        if self.player.current_q_timestamp == 0:
+            await interaction.response.send_message("⚠️ Too late! Answer already submitted.", ephemeral=True)
+            return
+            
         parts = interaction.data['custom_id'].split("_")
         clicked_display_idx = int(parts[1])
         
@@ -981,9 +995,14 @@ class GameView(discord.ui.View):
             await self.process_submission(interaction, [clicked_display_idx])
 
     async def submit_callback(self, interaction):
-        if self.restored: return await self.handle_restored(interaction) # <--- CHECK
+        if self.restored: return await self.handle_restored(interaction) 
         if not await self.check_ownership(interaction): return
-        if self.player.current_q_timestamp == 0: return
+        
+        # [FIX] Handle late click
+        if self.player.current_q_timestamp == 0:
+            await interaction.response.send_message("⚠️ Too late! Answer already submitted.", ephemeral=True)
+            return
+            
         if self.current_q.type == QuestionType.REORDER:
             await self.process_submission(interaction, [], reorder_final=self.reorder_sequence)
         else:
@@ -1123,6 +1142,7 @@ class GameView(discord.ui.View):
             ans_str = ", ".join([self.current_q.options[i] for i in self.current_q.correct_indices])
             embed.add_field(name="Correct Answer", value=ans_str)
         view = IntermissionView(self.session, self.player, correct, ans_str, points, powerup, is_last_question=is_last, gift_msg=gift_msg)
+        self.stop()
         if interaction:
             await interaction.response.edit_message(content=None, embed=embed, view=view, attachments=[])
         elif self.player.board_message:
