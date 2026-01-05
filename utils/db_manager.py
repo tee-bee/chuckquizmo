@@ -188,10 +188,15 @@ def get_leaderboard_data(session_ids):
     conn = get_connection()
     c = conn.cursor()
     placeholder = ",".join("?" for _ in session_ids)
+    
+    # [CHANGE] Added: AND user_id NOT IN (SELECT user_id FROM banned_users)
     query = f'''
         SELECT name, SUM(score) as total_score, SUM(correct_count) as total_correct,
         SUM(correct_count + incorrect_count) as total_attempts, COUNT(session_id) as games_played
-        FROM players WHERE session_id IN ({placeholder}) GROUP BY user_id
+        FROM players 
+        WHERE session_id IN ({placeholder})
+        AND user_id NOT IN (SELECT user_id FROM banned_users)
+        GROUP BY user_id
     '''
     c.execute(query, session_ids)
     rows = c.fetchall()
@@ -269,8 +274,11 @@ def get_session_details(session_id):
         conn.close()
         return None, None, None
     session = dict(row)
-    c.execute("SELECT * FROM players WHERE session_id = ? ORDER BY score DESC", (session_id,))
+    
+    # [CHANGE] Added: AND user_id NOT IN (SELECT user_id FROM banned_users)
+    c.execute("SELECT * FROM players WHERE session_id = ? AND user_id NOT IN (SELECT user_id FROM banned_users) ORDER BY score DESC", (session_id,))
     players_data = c.fetchall()
+    
     class MockPlayer:
         def __init__(self, row):
             self.user_id = row['user_id']
@@ -301,8 +309,15 @@ def get_session_details(session_id):
 def get_question_analytics(session_id):
     conn = get_connection()
     c = conn.cursor()
+    
+    # [CHANGE] Added: AND p.user_id NOT IN (SELECT user_id FROM banned_users)
     query = '''SELECT a.question_index, a.question_text, a.is_correct, a.time_taken, a.chosen_text, p.name 
-        FROM answers a JOIN players p ON a.player_db_id = p.id WHERE p.session_id = ? ORDER BY a.question_index'''
+        FROM answers a 
+        JOIN players p ON a.player_db_id = p.id 
+        WHERE p.session_id = ? 
+        AND p.user_id NOT IN (SELECT user_id FROM banned_users)
+        ORDER BY a.question_index'''
+        
     c.execute(query, (session_id,))
     rows = c.fetchall()
     conn.close()
