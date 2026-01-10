@@ -1122,9 +1122,16 @@ class GameView(discord.ui.View):
                     others = [x for x in self.session.players.values() if x.user_id != self.player.user_id]
                     if others:
                         rec = random.choice(others)
-                        rec.score += int(p.value)
-                        rec.notifications.append(f"🎁 **{self.player.name} gifted you {int(p.value)} pts!**")
-                        gift_feedback = f"Gifted {int(p.value)}pts to {rec.name}!"
+                        # [FIX] Ensure gift value is positive and valid
+                        gift_amount = abs(int(p.value)) 
+                        if gift_amount == 0: gift_amount = 500 # Fallback if value missing
+                        
+                        rec.score += gift_amount
+                        rec.notifications.append(f"🎁 **{self.player.name} gifted you {gift_amount} pts!**")
+                        gift_feedback = f"Gifted {gift_amount}pts to {rec.name}!"
+                        
+                        # [DEBUG] Log to console to track issues
+                        print(f"[GIFT] {self.player.name} -> {rec.name}: +{gift_amount}. New Score: {rec.score}")
                     else: gift_feedback = "Gift failed (No players)"
         
         # --- CLEANUP LOGIC ---
