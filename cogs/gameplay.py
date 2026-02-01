@@ -1112,7 +1112,13 @@ class GameView(discord.ui.View):
             self.player.answers_log[-1]['points'] = points
             
             if len(self.player.inventory) < 3 and random.random() < 0.4:
-                pool = [p for p in load_powerups() if p.name not in [x.name for x in self.player.inventory]]
+                # [CHANGE] Added check: 'and p.effect != EffectType.GLITCH'
+                pool = [
+                    p for p in load_powerups() 
+                    if p.name not in [x.name for x in self.player.inventory]
+                    and p.effect != EffectType.GLITCH
+                ]
+                
                 if pool:
                     new_pup = random.choice(pool)
                     self.player.inventory.append(new_pup)
