@@ -173,7 +173,8 @@ def register_new_player(session: GameSession, user: discord.User) -> Player:
     if user.id in session.players:
         return session.players[user.id]
     all_powerups = load_powerups()
-    starter = random.sample(all_powerups, min(3, len(all_powerups))) if all_powerups else []
+    safe_starters = [p for p in all_powerups if p.effect != EffectType.GLITCH]
+    starter = random.sample(safe_starters, min(3, len(safe_starters))) if safe_starters else []
     new_player = Player(
         user_id=user.id, name=user.display_name, avatar_url=user.display_avatar.url, inventory=starter
     )
