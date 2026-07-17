@@ -173,7 +173,11 @@ def register_new_player(session: GameSession, user: discord.User) -> Player:
     if user.id in session.players:
         return session.players[user.id]
     all_powerups = load_powerups()
-    safe_starters = [p for p in all_powerups if p.effect != EffectType.GLITCH]
+    # Filter out both Glitch and Double Jeopardy
+    safe_starters = [
+        p for p in all_powerups 
+        if p.effect not in (EffectType.GLITCH, EffectType.DOUBLE_JEOPARDY)
+    ]
     starter = random.sample(safe_starters, min(3, len(safe_starters))) if safe_starters else []
     new_player = Player(
         user_id=user.id, name=user.display_name, avatar_url=user.display_avatar.url, inventory=starter
@@ -1113,11 +1117,11 @@ class GameView(discord.ui.View):
             self.player.answers_log[-1]['points'] = points
             
             if len(self.player.inventory) < 3 and random.random() < 0.4:
-                # [CHANGE] Added check: 'and p.effect != EffectType.GLITCH'
+                # Filter out both Glitch and Double Jeopardy
                 pool = [
                     p for p in load_powerups() 
                     if p.name not in [x.name for x in self.player.inventory]
-                    and p.effect != EffectType.GLITCH
+                    and p.effect not in (EffectType.GLITCH, EffectType.DOUBLE_JEOPARDY)
                 ]
                 
                 if pool:
